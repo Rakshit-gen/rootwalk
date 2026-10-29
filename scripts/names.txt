@@ -1,0 +1,11 @@
+example.com
+www.wikipedia.org
+github.com
+www.bbc.co.uk
+news.ycombinator.com
+go.dev
+www.cloudflare.com
+docs.python.org
+en.wikipedia.org
+mail.google.com
+does-not-exist.example.com

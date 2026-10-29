@@ -1,3 +1,4 @@
 /rootwalk
 *.test
 *.out
+bench-serve.log
