@@ -108,8 +108,17 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			}
 			return Answer{Rcode: m.Rcode, Answers: chain, next: end}, nil
 		}
+		soa := matchingType(m.Authority, dnsmsg.TypeSOA)
+		if m.Rcode == dnsmsg.RcodeNXDomain {
+			r.trace("%s says %s doesn't exist", server, name)
+			return Answer{Rcode: dnsmsg.RcodeNXDomain, Authority: soa}, nil
+		}
 		child, ns := referral(m, name, zone)
 		if child == "" {
+			if m.Rcode == dnsmsg.RcodeSuccess && (m.Authoritative || len(soa) > 0) {
+				r.trace("%s says %s has no %s records", server, name, t)
+				return Answer{Rcode: dnsmsg.RcodeSuccess, Authority: soa}, nil
+			}
 			return Answer{}, fmt.Errorf("%s: %s gave neither an answer nor a referral", q, server)
 		}
 		glue := glueFor(m, ns, zone)
@@ -162,6 +171,16 @@ func matching(rrs []dnsmsg.RR, name string, t dnsmsg.Type) []dnsmsg.RR {
 	var out []dnsmsg.RR
 	for _, rr := range rrs {
 		if strings.EqualFold(rr.Name, name) && rr.Type == t {
+			out = append(out, rr)
+		}
+	}
+	return out
+}
+
+func matchingType(rrs []dnsmsg.RR, t dnsmsg.Type) []dnsmsg.RR {
+	var out []dnsmsg.RR
+	for _, rr := range rrs {
+		if rr.Type == t {
 			out = append(out, rr)
 		}
 	}

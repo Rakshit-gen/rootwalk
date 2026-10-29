@@ -119,3 +119,15 @@ func TestStopsAtCNAMELoops(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestNamesThatDontExistAndTypesThatArent(t *testing.T) {
+	_, r := world(t)
+	ans, err := r.Resolve(ctx, "nope.example.test", dnsmsg.TypeA)
+	if err != nil || ans.Rcode != dnsmsg.RcodeNXDomain || len(ans.Authority) != 1 || ans.Authority[0].SOA.Minimum != 60 {
+		t.Fatalf("NXDOMAIN: %+v %v", ans, err)
+	}
+	ans, err = r.Resolve(ctx, "www.example.test", dnsmsg.TypeAAAA)
+	if err != nil || ans.Rcode != dnsmsg.RcodeSuccess || len(ans.Answers) != 0 || len(ans.Authority) != 1 {
+		t.Fatalf("no AAAA: %+v %v", ans, err)
+	}
+}
