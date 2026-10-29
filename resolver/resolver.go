@@ -28,6 +28,8 @@ type Answer struct {
 	Rcode     uint8
 	Answers   []dnsmsg.RR
 	Authority []dnsmsg.RR // the SOA, for a negative answer
+
+	next string // a CNAME target the answer stopped at, still to look up
 }
 
 // Resolver walks from the root servers down to an authoritative answer.
@@ -40,6 +42,7 @@ type Resolver struct {
 const (
 	maxReferrals = 16
 	maxDepth     = 8 // nested lookups for nameserver addresses
+	maxCNAMEs    = 8
 )
 
 var ErrNoAnswer = errors.New("no server gave a usable answer")
@@ -50,9 +53,33 @@ func (r *Resolver) trace(format string, args ...any) {
 	}
 }
 
-// Resolve finds the records of type t for name.
+// Resolve finds the records of type t for name, following CNAMEs. The
+// answer holds the whole chain, CNAMEs first.
 func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Answer, error) {
-	return r.lookup(ctx, dnsmsg.Fqdn(name), t, 0)
+	return r.resolve(ctx, dnsmsg.Fqdn(name), t, 0)
+}
+
+func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
+	var chain []dnsmsg.RR
+	seen := map[string]bool{}
+	for range maxCNAMEs + 1 {
+		if seen[strings.ToLower(name)] {
+			return Answer{}, fmt.Errorf("%s: CNAME loop", name)
+		}
+		seen[strings.ToLower(name)] = true
+		ans, err := r.lookup(ctx, name, t, depth)
+		if err != nil {
+			return Answer{}, err
+		}
+		chain = append(chain, ans.Answers...)
+		if ans.next == "" {
+			ans.Answers = chain
+			return ans, nil
+		}
+		r.trace("following CNAME to %s", ans.next)
+		name = ans.next
+	}
+	return Answer{}, fmt.Errorf("%s: more than %d CNAMEs", name, maxCNAMEs)
 }
 
 func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
@@ -73,6 +100,13 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 		if answers := matching(m.Answers, name, t); len(answers) > 0 {
 			r.trace("%s answered %s from %s", server, q, zone)
 			return Answer{Rcode: m.Rcode, Answers: answers}, nil
+		}
+		if chain, end := cnames(m.Answers, name); len(chain) > 0 && t != dnsmsg.TypeCNAME {
+			r.trace("%s answered %s with a CNAME", server, q)
+			if answers := matching(m.Answers, end, t); len(answers) > 0 {
+				return Answer{Rcode: m.Rcode, Answers: append(chain, answers...)}, nil
+			}
+			return Answer{Rcode: m.Rcode, Answers: chain, next: end}, nil
 		}
 		child, ns := referral(m, name, zone)
 		if child == "" {
@@ -96,7 +130,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []netip.Addr {
 	for _, n := range ns {
 		r.trace("looking up %s's address", n)
-		ans, err := r.lookup(ctx, n, dnsmsg.TypeA, depth+1)
+		ans, err := r.resolve(ctx, n, dnsmsg.TypeA, depth+1)
 		if err != nil {
 			continue
 		}
@@ -132,6 +166,21 @@ func matching(rrs []dnsmsg.RR, name string, t dnsmsg.Type) []dnsmsg.RR {
 		}
 	}
 	return out
+}
+
+// cnames follows CNAME records for name within one reply, returning the
+// chain and the name it ends at.
+func cnames(rrs []dnsmsg.RR, name string) ([]dnsmsg.RR, string) {
+	var chain []dnsmsg.RR
+	for range maxCNAMEs {
+		c := matching(rrs, name, dnsmsg.TypeCNAME)
+		if len(c) == 0 {
+			break
+		}
+		chain = append(chain, c[0])
+		name = c[0].Target
+	}
+	return chain, name
 }
 
 // referral returns the zone a reply delegates to and its nameservers. Only
