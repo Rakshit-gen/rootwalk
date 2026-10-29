@@ -57,3 +57,27 @@ func TestReferralsMustGoDown(t *testing.T) {
 		t.Fatalf("a .test server referring to test. itself was followed to %q", zone)
 	}
 }
+
+func TestLooksUpNameserversThatCameWithoutGlue(t *testing.T) {
+	n, r := world(t)
+	// other.test is served by a host inside example.test, so .test has no glue for it.
+	n.add("10.0.1.1", zone(t, "test.",
+		"example.test. 3600 NS ns1.example.test.",
+		"ns1.example.test. 3600 A 10.0.2.1",
+		"other.test. 3600 NS dns.example.test."))
+	n.add("10.0.2.1", zone(t, "example.test.", "dns.example.test. 300 A 10.0.3.1"))
+	n.add("10.0.3.1", zone(t, "other.test.", "www.other.test. 300 A 192.0.2.33"))
+	ans, err := r.Resolve(ctx, "www.other.test", dnsmsg.TypeA)
+	if err != nil || ans.Answers[0].Addr.String() != "192.0.2.33" {
+		t.Fatalf("%v %v", ans, err)
+	}
+}
+
+func TestGivesUpOnNameserversThatNeedEachOther(t *testing.T) {
+	n, r := world(t)
+	// a.test's server lives in b.test and b.test's in a.test, neither with glue.
+	n.add("10.0.1.1", zone(t, "test.", "a.test. 3600 NS ns.b.test.", "b.test. 3600 NS ns.a.test."))
+	if _, err := r.Resolve(ctx, "www.a.test", dnsmsg.TypeA); err == nil {
+		t.Fatal("resolved a circular delegation")
+	}
+}

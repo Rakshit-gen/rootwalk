@@ -37,7 +37,10 @@ type Resolver struct {
 	Trace func(string) // called with each step, if set
 }
 
-const maxReferrals = 16
+const (
+	maxReferrals = 16
+	maxDepth     = 8 // nested lookups for nameserver addresses
+)
 
 var ErrNoAnswer = errors.New("no server gave a usable answer")
 
@@ -49,10 +52,13 @@ func (r *Resolver) trace(format string, args ...any) {
 
 // Resolve finds the records of type t for name.
 func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Answer, error) {
-	return r.lookup(ctx, dnsmsg.Fqdn(name), t)
+	return r.lookup(ctx, dnsmsg.Fqdn(name), t, 0)
 }
 
-func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type) (Answer, error) {
+func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
+	if depth > maxDepth {
+		return Answer{}, fmt.Errorf("%s %s: nameserver lookups nested more than %d deep", name, t, maxDepth)
+	}
 	servers := r.Roots
 	if servers == nil {
 		servers = RootServers
@@ -75,11 +81,34 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type) (Answ
 		glue := glueFor(m, ns, zone)
 		r.trace("%s sent %s to %s (%d servers, %d with addresses)", server, q, child, len(ns), len(glue))
 		if len(glue) == 0 {
-			return Answer{}, fmt.Errorf("%s: referral to %s has no addresses", q, child)
+			glue = r.addressesOf(ctx, ns, depth)
+		}
+		if len(glue) == 0 {
+			return Answer{}, fmt.Errorf("%s: no address found for any of %s's servers", q, child)
 		}
 		zone, servers = child, glue
 	}
 	return Answer{}, fmt.Errorf("%s: more than %d referrals", q, maxReferrals)
+}
+
+// addressesOf looks up the nameservers' addresses, stopping at the first
+// that resolves: one working server is enough to carry on.
+func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []netip.Addr {
+	for _, n := range ns {
+		r.trace("looking up %s's address", n)
+		ans, err := r.lookup(ctx, n, dnsmsg.TypeA, depth+1)
+		if err != nil {
+			continue
+		}
+		var out []netip.Addr
+		for _, rr := range ans.Answers {
+			out = append(out, rr.Addr)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
 }
 
 // ask tries the servers in turn until one replies.
