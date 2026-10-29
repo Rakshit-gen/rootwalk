@@ -36,7 +36,7 @@ dig @127.0.0.1 -p 5353 go.dev
 | Cache hits during the bench | 17 of 54 lookups | what `rootwalk serve` prints on exit; nested lookups for nameserver addresses count too | 2026-10-30 |
 | Message parser fuzzing | 10M inputs in 30 s, no failures | `make fuzz` (`FuzzUnpack`), Apple M4 | 2026-10-30 |
 
-The NXDOMAIN row in the bench (does-not-exist.example.com, 21 to 60 ms
+The NXDOMAIN row in the bench (does-not-exist.example.com, 21 and 22 ms
 cold) is fast because example.com's servers were already cached from the
 first name. Latency depends mostly on your distance to the servers asked,
 so expect different numbers on another network.
