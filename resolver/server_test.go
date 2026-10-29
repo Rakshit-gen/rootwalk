@@ -1,7 +1,12 @@
 package resolver
 
 import (
+	"context"
+	"fmt"
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/Rakshit-gen/rootwalk/dnsmsg"
 )
@@ -37,5 +42,62 @@ func TestReplyAnswersLikeARecursiveResolver(t *testing.T) {
 	}
 	if n.queries != before {
 		t.Fatal("a bad query reached the network")
+	}
+}
+
+// serving starts r on a loopback UDP port and returns a client for it.
+func serving(t *testing.T, r *Resolver) (Net, netip.Addr) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go r.ServeUDP(ctx, pc)
+	return Net{Port: uint16(pc.LocalAddr().(*net.UDPAddr).Port)}, netip.MustParseAddr("127.0.0.1")
+}
+
+// bigWorld is world with a name that has more A records than fit in 512 bytes.
+func bigWorld(t *testing.T) (*network, *Resolver) {
+	n, r := world(t)
+	lines := []string{"example.test. 300 SOA ns1.example.test. h.example.test. 60"}
+	for i := range 60 {
+		lines = append(lines, fmt.Sprintf("big.example.test. 300 A 192.0.2.%d", i+1))
+	}
+	n.add("10.0.2.1", zone(t, "example.test.", lines...))
+	return n, r
+}
+
+func TestServesOverUDP(t *testing.T) {
+	_, r := world(t)
+	client, at := serving(t, r)
+	m, err := client.Exchange(ctx, at, dnsmsg.Question{Name: "www.example.test.", Type: dnsmsg.TypeA, Class: dnsmsg.ClassINET})
+	if err != nil || len(m.Answers) != 1 || m.Answers[0].Addr.String() != "192.0.2.80" {
+		t.Fatalf("got %+v, %v", m, err)
+	}
+}
+
+func TestTruncatesWhatDoesntFitTheClientsBuffer(t *testing.T) {
+	_, r := bigWorld(t)
+	client, at := serving(t, r)
+	conn, err := net.Dial("udp", netip.AddrPortFrom(at, client.Port).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	q := dnsmsg.NewQuery(1, "big.example.test", dnsmsg.TypeA, 0)
+	q.Additional = nil // no EDNS0, so 512 bytes is the limit
+	b, _ := q.Pack()
+	conn.Write(b)
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 65535)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := dnsmsg.Unpack(buf[:n])
+	if err != nil || !m.Truncated || len(m.Answers) != 0 || n > 512 {
+		t.Fatalf("%d bytes, TC=%v, %d answers, %v", n, m.Truncated, len(m.Answers), err)
 	}
 }
