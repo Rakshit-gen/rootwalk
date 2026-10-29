@@ -65,3 +65,53 @@ func readName(msg []byte, off int) (string, int, error) {
 		}
 	}
 }
+
+// appendName writes name uncompressed. It accepts names with or without
+// the trailing dot and the \. and \\ escapes readName produces.
+func appendName(b []byte, name string) ([]byte, error) {
+	if name == "." || name == "" {
+		return append(b, 0), nil
+	}
+	start := len(b)
+	var label []byte
+	flush := func() error {
+		if len(label) == 0 || len(label) > 63 {
+			return ErrLabel
+		}
+		b = append(b, byte(len(label)))
+		b = append(b, label...)
+		label = label[:0]
+		return nil
+	}
+	for i := 0; i < len(name); i++ {
+		switch c := name[i]; {
+		case c == '\\' && i+1 < len(name):
+			i++
+			label = append(label, name[i])
+		case c == '.':
+			if err := flush(); err != nil {
+				return nil, err
+			}
+		default:
+			label = append(label, c)
+		}
+	}
+	if len(label) > 0 {
+		if err := flush(); err != nil {
+			return nil, err
+		}
+	}
+	b = append(b, 0)
+	if len(b)-start > 255 {
+		return nil, ErrName
+	}
+	return b, nil
+}
+
+// Fqdn adds the trailing dot if it is missing.
+func Fqdn(name string) string {
+	if strings.HasSuffix(name, ".") && !strings.HasSuffix(name, `\.`) {
+		return name
+	}
+	return name + "."
+}

@@ -48,3 +48,34 @@ func TestReadNameLimitsLength(t *testing.T) {
 		t.Fatalf("got %v, want ErrName", err)
 	}
 }
+
+func TestAppendNameRoundTrips(t *testing.T) {
+	for _, name := range []string{".", "com.", "www.example.com.", `odd\.label.example.`} {
+		b, err := appendName(nil, name)
+		if err != nil {
+			t.Fatalf("%q: %v", name, err)
+		}
+		got, end, err := readName(b, 0)
+		if err != nil || got != name || end != len(b) {
+			t.Errorf("%q came back as %q (%d of %d, %v)", name, got, end, len(b), err)
+		}
+	}
+	if b, _ := appendName(nil, "example.com"); string(b) != "\x07example\x03com\x00" {
+		t.Errorf("no trailing dot: %q", b)
+	}
+}
+
+func TestAppendNameRejectsBadLabels(t *testing.T) {
+	long := string(make([]byte, 64))
+	for _, name := range []string{"a..b.", long + ".com."} {
+		if _, err := appendName(nil, name); err != ErrLabel {
+			t.Errorf("%q: got %v, want ErrLabel", name, err)
+		}
+	}
+}
+
+func TestFqdn(t *testing.T) {
+	if Fqdn("example.com") != "example.com." || Fqdn("example.com.") != "example.com." {
+		t.Fatal("Fqdn")
+	}
+}
