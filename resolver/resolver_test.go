@@ -2,6 +2,8 @@ package resolver
 
 import (
 	"context"
+	"errors"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -166,5 +168,24 @@ func TestASecondNameInAZoneSkipsTheRoot(t *testing.T) {
 	}
 	if got := n.queries - before; got != 1 {
 		t.Fatalf("a new name in a cached zone took %d queries, want 1", got)
+	}
+}
+
+func TestSkipsServersThatFailOrRefuse(t *testing.T) {
+	for _, rcode := range []uint8{dnsmsg.RcodeServFail, dnsmsg.RcodeRefused, dnsmsg.RcodeFormErr} {
+		n, r := world(t)
+		n.servers[netip.MustParseAddr("10.0.0.2")] = func(q dnsmsg.Question) dnsmsg.Message {
+			return dnsmsg.Message{Header: dnsmsg.Header{Response: true, Rcode: rcode}, Questions: []dnsmsg.Question{q}}
+		}
+		r.Roots = addrs("10.0.0.2", "10.0.0.1")
+		ans, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA)
+		if err != nil || len(ans.Answers) != 1 {
+			t.Fatalf("rcode %d: %+v, %v", rcode, ans, err)
+		}
+	}
+	_, r := world(t)
+	r.Roots = addrs("10.0.2.1") // example.test's server refuses anything outside its zone
+	if _, err := r.Resolve(ctx, "www.other.test", dnsmsg.TypeA); !errors.Is(err, ErrNoAnswer) {
+		t.Fatalf("got %v, want ErrNoAnswer", err)
 	}
 }

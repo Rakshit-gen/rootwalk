@@ -196,14 +196,19 @@ func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []ne
 	return nil
 }
 
-// ask tries the servers in turn until one replies.
+// ask tries the servers in turn until one gives a reply worth using. A
+// server that fails, refuses or doesn't understand the query is skipped.
 func (r *Resolver) ask(ctx context.Context, servers []netip.Addr, q dnsmsg.Question) (dnsmsg.Message, netip.Addr, error) {
 	var errs []error
 	for _, s := range servers {
 		m, err := r.Net.Exchange(ctx, s, q)
+		if err == nil && m.Rcode != dnsmsg.RcodeSuccess && m.Rcode != dnsmsg.RcodeNXDomain {
+			err = fmt.Errorf("%s answered %s with rcode %d", s, q, m.Rcode)
+		}
 		if err == nil {
 			return m, s, nil
 		}
+		r.trace("%v", err)
 		errs = append(errs, err)
 	}
 	return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%w: %v", ErrNoAnswer, errors.Join(errs...))
