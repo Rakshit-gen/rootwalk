@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make lint
+      - run: make test
+      - name: Fuzz the message parser for a bit
+        run: go test ./dnsmsg -run '^$' -fuzz FuzzUnpack -fuzztime 20s
+      - name: Look up a real name from the root
+        run: make build && ./rootwalk -trace example.com
