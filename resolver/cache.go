@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -27,11 +28,19 @@ type entry struct {
 type Cache struct {
 	mu           sync.Mutex
 	m            map[cacheKey]entry
+	zones        map[string]delegation
 	Now          func() time.Time // time.Now unless a test sets it
 	hits, misses int
 }
 
-func NewCache() *Cache { return &Cache{m: map[cacheKey]entry{}, Now: time.Now} }
+type delegation struct {
+	servers []netip.Addr
+	expires time.Time
+}
+
+func NewCache() *Cache {
+	return &Cache{m: map[cacheKey]entry{}, zones: map[string]delegation{}, Now: time.Now}
+}
 
 func key(name string, t dnsmsg.Type) cacheKey { return cacheKey{strings.ToLower(dnsmsg.Fqdn(name)), t} }
 
@@ -95,4 +104,33 @@ func (c *Cache) PutNegative(name string, t dnsmsg.Type, rcode uint8, soa dnsmsg.
 	ttl := min(soa.TTL, soa.SOA.Minimum)
 	soa.TTL = ttl
 	c.put(name, t, entry{rrs: []dnsmsg.RR{soa}, rcode: rcode}, time.Duration(ttl)*time.Second)
+}
+
+// PutZone remembers the servers a referral handed out for zone, so later
+// lookups under it can skip the walk from the root.
+func (c *Cache) PutZone(zone string, servers []netip.Addr, ttl uint32) {
+	if len(servers) == 0 || ttl == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.zones[strings.ToLower(dnsmsg.Fqdn(zone))] = delegation{servers, c.Now().Add(min(time.Duration(ttl)*time.Second, maxTTL))}
+}
+
+// Closest returns the deepest zone at or above name whose servers are
+// cached, or "" if there is none.
+func (c *Cache) Closest(name string) (string, []netip.Addr) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.Now()
+	for z := strings.ToLower(dnsmsg.Fqdn(name)); z != "."; {
+		if d, ok := c.zones[z]; ok && now.Before(d.expires) {
+			return z, d.servers
+		}
+		_, z, _ = strings.Cut(z, ".")
+		if z == "" {
+			z = "."
+		}
+	}
+	return "", nil
 }

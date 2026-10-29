@@ -64,3 +64,21 @@ func TestNegativeAnswersLastTheSOAMinimum(t *testing.T) {
 		t.Fatal("negative answer outlived the SOA minimum")
 	}
 }
+
+func TestClosestFindsTheDeepestUnexpiredZone(t *testing.T) {
+	c, clock := newTestCache()
+	com := []netip.Addr{netip.MustParseAddr("192.0.2.1")}
+	example := []netip.Addr{netip.MustParseAddr("192.0.2.2")}
+	c.PutZone("com.", com, 600)
+	c.PutZone("Example.com", example, 60)
+	for name, want := range map[string]string{"www.example.com.": "example.com.", "example.com.": "example.com.",
+		"other.com.": "com.", "example.org.": "", "a.b.c.example.com": "example.com."} {
+		if z, _ := c.Closest(name); z != want {
+			t.Errorf("Closest(%s) = %q, want %q", name, z, want)
+		}
+	}
+	clock.wait(61 * time.Second)
+	if z, s := c.Closest("www.example.com."); z != "com." || s[0] != com[0] {
+		t.Fatalf("after expiry got %q %v, want com.", z, s)
+	}
+}
