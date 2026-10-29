@@ -5,6 +5,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"strings"
@@ -19,7 +22,7 @@ type Exchanger interface {
 	Exchange(ctx context.Context, server netip.Addr, q dnsmsg.Question) (dnsmsg.Message, error)
 }
 
-// Net talks to real servers on port 53 over UDP.
+// Net talks to real servers on port 53: UDP first, TCP if the answer is truncated.
 type Net struct {
 	Timeout time.Duration
 	Port    uint16 // 53 unless set; tests point it elsewhere
@@ -27,8 +30,14 @@ type Net struct {
 
 const udpSize = 1232 // the EDNS0 size DNS Flag Day 2020 settled on
 
+var errMismatch = errors.New("reply doesn't match the query")
+
 func (n Net) Exchange(ctx context.Context, server netip.Addr, q dnsmsg.Question) (dnsmsg.Message, error) {
-	return n.exchange(ctx, "udp", server, q)
+	m, err := n.exchange(ctx, "udp", server, q)
+	if err == nil && m.Truncated {
+		return n.exchange(ctx, "tcp", server, q)
+	}
+	return m, err
 }
 
 func (n Net) exchange(ctx context.Context, network string, server netip.Addr, q dnsmsg.Question) (dnsmsg.Message, error) {
@@ -57,6 +66,9 @@ func (n Net) exchange(ctx context.Context, network string, server netip.Addr, q 
 	if err != nil {
 		return dnsmsg.Message{}, err
 	}
+	if network == "tcp" {
+		query = append(binary.BigEndian.AppendUint16(nil, uint16(len(query))), query...)
+	}
 	if _, err := conn.Write(query); err != nil {
 		return dnsmsg.Message{}, err
 	}
@@ -71,13 +83,28 @@ func (n Net) exchange(ctx context.Context, network string, server netip.Addr, q 
 		if err == nil && matches(m, id, q) {
 			return m, nil
 		}
+		if network == "tcp" {
+			if err == nil {
+				err = errMismatch
+			}
+			return dnsmsg.Message{}, fmt.Errorf("%s: %w", server, err)
+		}
 	}
 }
 
 func read(conn net.Conn, network string) ([]byte, error) {
-	buf := make([]byte, 65535)
-	n, err := conn.Read(buf)
-	return buf[:n], err
+	if network == "udp" {
+		buf := make([]byte, 65535)
+		n, err := conn.Read(buf)
+		return buf[:n], err
+	}
+	var size [2]byte
+	if _, err := io.ReadFull(conn, size[:]); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, binary.BigEndian.Uint16(size[:]))
+	_, err := io.ReadFull(conn, buf)
+	return buf, err
 }
 
 func matches(m dnsmsg.Message, id uint16, q dnsmsg.Question) bool {
