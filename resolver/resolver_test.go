@@ -35,3 +35,25 @@ func TestTriesTheNextServerWhenOneIsDown(t *testing.T) {
 		t.Fatalf("%d queries, want 4", n.queries)
 	}
 }
+
+func TestIgnoresGlueOutsideTheServersZone(t *testing.T) {
+	n, r := world(t)
+	// The .test server is compromised: it delegates example.test to a
+	// server in another TLD and supplies an address for it, which it has
+	// no authority to give.
+	n.add("10.0.1.1", zone(t, "test.",
+		"example.test. 3600 NS ns.attacker.example.",
+		"ns.attacker.example. 3600 A 6.6.6.6"))
+	n.add("6.6.6.6", zone(t, "example.test.", "www.example.test. 1 A 6.6.6.6"))
+	ans, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA)
+	if err == nil {
+		t.Fatalf("followed out-of-zone glue to %v", ans.Answers)
+	}
+}
+
+func TestReferralsMustGoDown(t *testing.T) {
+	m := dnsmsg.Message{Authority: []dnsmsg.RR{{Name: "test.", Type: dnsmsg.TypeNS, Target: "ns.nic.test."}}}
+	if zone, _ := referral(m, "www.example.test.", "test."); zone != "" {
+		t.Fatalf("a .test server referring to test. itself was followed to %q", zone)
+	}
+}

@@ -68,11 +68,11 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type) (Answ
 			r.trace("%s answered %s from %s", server, q, zone)
 			return Answer{Rcode: m.Rcode, Answers: answers}, nil
 		}
-		child, ns := referral(m, name)
+		child, ns := referral(m, name, zone)
 		if child == "" {
 			return Answer{}, fmt.Errorf("%s: %s gave neither an answer nor a referral", q, server)
 		}
-		glue := glueFor(m, ns)
+		glue := glueFor(m, ns, zone)
 		r.trace("%s sent %s to %s (%d servers, %d with addresses)", server, q, child, len(ns), len(glue))
 		if len(glue) == 0 {
 			return Answer{}, fmt.Errorf("%s: referral to %s has no addresses", q, child)
@@ -105,12 +105,14 @@ func matching(rrs []dnsmsg.RR, name string, t dnsmsg.Type) []dnsmsg.RR {
 	return out
 }
 
-// referral returns the zone a reply delegates to and its nameservers.
-func referral(m dnsmsg.Message, name string) (string, []string) {
+// referral returns the zone a reply delegates to and its nameservers. Only
+// a delegation strictly below the zone the server was asked as counts: a
+// server for .test can't hand out the servers for com.
+func referral(m dnsmsg.Message, name, from string) (string, []string) {
 	var zone string
 	var ns []string
 	for _, rr := range m.Authority {
-		if rr.Type != dnsmsg.TypeNS || !inZone(name, rr.Name) {
+		if rr.Type != dnsmsg.TypeNS || !inZone(name, rr.Name) || !inZone(rr.Name, from) || strings.EqualFold(rr.Name, from) {
 			continue
 		}
 		if zone == "" {
@@ -123,11 +125,13 @@ func referral(m dnsmsg.Message, name string) (string, []string) {
 	return zone, ns
 }
 
-// glueFor returns the addresses the additional section gives for the nameservers.
-func glueFor(m dnsmsg.Message, ns []string) []netip.Addr {
+// glueFor returns the addresses the additional section gives for the
+// nameservers, believing only addresses for names inside the zone the
+// server was asked as.
+func glueFor(m dnsmsg.Message, ns []string, from string) []netip.Addr {
 	var out []netip.Addr
 	for _, rr := range m.Additional {
-		if rr.Type != dnsmsg.TypeA && rr.Type != dnsmsg.TypeAAAA {
+		if rr.Type != dnsmsg.TypeA && rr.Type != dnsmsg.TypeAAAA || !inZone(rr.Name, from) {
 			continue
 		}
 		for _, n := range ns {
