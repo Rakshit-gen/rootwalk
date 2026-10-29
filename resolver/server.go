@@ -2,7 +2,9 @@ package resolver
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
+	"time"
 
 	"github.com/Rakshit-gen/rootwalk/dnsmsg"
 )
@@ -80,4 +82,49 @@ func fitUDP(m dnsmsg.Message, q dnsmsg.Message) ([]byte, error) {
 	}
 	m.Truncated, m.Answers, m.Authority = true, nil, nil
 	return m.Pack()
+}
+
+// ServeTCP answers queries on connections from ln until ctx is done. A
+// client may send several queries on one connection; it is closed after
+// idle seconds without one.
+func (r *Resolver) ServeTCP(ctx context.Context, ln net.Listener) error {
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		go r.serveConn(ctx, conn)
+	}
+}
+
+const idle = 10 * time.Second
+
+func (r *Resolver) serveConn(ctx context.Context, conn net.Conn) {
+	defer conn.Close()
+	for {
+		conn.SetDeadline(time.Now().Add(idle))
+		b, err := read(conn, "tcp")
+		if err != nil {
+			return
+		}
+		q, err := dnsmsg.Unpack(b)
+		if err != nil {
+			return
+		}
+		out, err := r.Reply(ctx, q).Pack()
+		if err != nil || len(out) > 65535 {
+			return
+		}
+		conn.SetDeadline(time.Now().Add(idle))
+		if _, err := conn.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(out))), out...)); err != nil {
+			return
+		}
+	}
 }

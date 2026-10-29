@@ -45,15 +45,20 @@ func TestReplyAnswersLikeARecursiveResolver(t *testing.T) {
 	}
 }
 
-// serving starts r on a loopback UDP port and returns a client for it.
+// serving starts r on a loopback port, UDP and TCP, and returns a client for it.
 func serving(t *testing.T, r *Resolver) (Net, netip.Addr) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	pc, err := net.ListenPacket("udp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	go r.ServeTCP(ctx, ln)
 	go r.ServeUDP(ctx, pc)
 	return Net{Port: uint16(pc.LocalAddr().(*net.UDPAddr).Port)}, netip.MustParseAddr("127.0.0.1")
 }
@@ -62,7 +67,7 @@ func serving(t *testing.T, r *Resolver) (Net, netip.Addr) {
 func bigWorld(t *testing.T) (*network, *Resolver) {
 	n, r := world(t)
 	lines := []string{"example.test. 300 SOA ns1.example.test. h.example.test. 60"}
-	for i := range 60 {
+	for i := range 100 { // 1600 bytes or so, past the 1232 EDNS0 buffer
 		lines = append(lines, fmt.Sprintf("big.example.test. 300 A 192.0.2.%d", i+1))
 	}
 	n.add("10.0.2.1", zone(t, "example.test.", lines...))
@@ -99,5 +104,14 @@ func TestTruncatesWhatDoesntFitTheClientsBuffer(t *testing.T) {
 	m, err := dnsmsg.Unpack(buf[:n])
 	if err != nil || !m.Truncated || len(m.Answers) != 0 || n > 512 {
 		t.Fatalf("%d bytes, TC=%v, %d answers, %v", n, m.Truncated, len(m.Answers), err)
+	}
+}
+
+func TestAClientFallsBackToTCPForTheWholeAnswer(t *testing.T) {
+	_, r := bigWorld(t)
+	client, at := serving(t, r)
+	m, err := client.Exchange(ctx, at, dnsmsg.Question{Name: "big.example.test.", Type: dnsmsg.TypeA, Class: dnsmsg.ClassINET})
+	if err != nil || m.Truncated || len(m.Answers) != 100 {
+		t.Fatalf("TC=%v, %d answers, %v", m.Truncated, len(m.Answers), err)
 	}
 }
