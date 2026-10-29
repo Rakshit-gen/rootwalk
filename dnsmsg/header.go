@@ -7,7 +7,10 @@ import (
 )
 
 // ErrShort means the message ended before a field it promised.
-var ErrShort = errors.New("dnsmsg: message too short")
+var (
+	ErrShort    = errors.New("dnsmsg: message too short")
+	ErrTrailing = errors.New("dnsmsg: bytes left after the last record")
+)
 
 // Response codes this resolver cares about.
 const (
