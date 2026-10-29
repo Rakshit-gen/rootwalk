@@ -153,3 +153,18 @@ func TestTheCacheAnswersRepeatsWithoutTheNetwork(t *testing.T) {
 		}
 	}
 }
+
+func TestASecondNameInAZoneSkipsTheRoot(t *testing.T) {
+	n, r := world(t)
+	r.Cache, _ = newTestCache()
+	if _, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA); err != nil {
+		t.Fatal(err)
+	}
+	before := n.queries
+	if _, err := r.Resolve(ctx, "nope.example.test", dnsmsg.TypeA); err != nil {
+		t.Fatal(err)
+	}
+	if got := n.queries - before; got != 1 {
+		t.Fatalf("a new name in a cached zone took %d queries, want 1", got)
+	}
+}

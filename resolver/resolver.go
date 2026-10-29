@@ -122,6 +122,12 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 		servers = RootServers
 	}
 	zone := "."
+	if r.Cache != nil {
+		if z, cached := r.Cache.Closest(name); z != "" {
+			r.trace("starting at %s from the cache", z)
+			zone, servers = z, cached
+		}
+	}
 	q := dnsmsg.Question{Name: name, Type: t, Class: dnsmsg.ClassINET}
 	for range maxReferrals {
 		m, server, err := r.ask(ctx, servers, q)
@@ -159,6 +165,11 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 		}
 		if len(glue) == 0 {
 			return Answer{}, fmt.Errorf("%s: no address found for any of %s's servers", q, child)
+		}
+		if r.Cache != nil {
+			if nsrr := matching(m.Authority, child, dnsmsg.TypeNS); len(nsrr) > 0 {
+				r.Cache.PutZone(child, glue, nsrr[0].TTL)
+			}
 		}
 		zone, servers = child, glue
 	}
