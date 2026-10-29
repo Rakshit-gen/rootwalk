@@ -18,6 +18,7 @@ const (
 	RcodeFormErr  = 1
 	RcodeServFail = 2
 	RcodeNXDomain = 3
+	RcodeNotImp   = 4
 	RcodeRefused  = 5
 )
 
