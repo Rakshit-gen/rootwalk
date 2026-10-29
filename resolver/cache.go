@@ -86,3 +86,13 @@ func (c *Cache) Stats() (hits, misses int) {
 	defer c.mu.Unlock()
 	return c.hits, c.misses
 }
+
+// PutNegative caches "no such name" (rcode NXDomain) or "no records of this
+// type" (rcode Success with nothing), for as long as RFC 2308 allows: the
+// smaller of the SOA record's TTL and its minimum field. The SOA is kept so
+// it can be handed back in the authority section.
+func (c *Cache) PutNegative(name string, t dnsmsg.Type, rcode uint8, soa dnsmsg.RR) {
+	ttl := min(soa.TTL, soa.SOA.Minimum)
+	soa.TTL = ttl
+	c.put(name, t, entry{rrs: []dnsmsg.RR{soa}, rcode: rcode}, time.Duration(ttl)*time.Second)
+}

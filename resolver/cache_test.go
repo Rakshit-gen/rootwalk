@@ -48,3 +48,19 @@ func TestCacheCapsTTLsAtADay(t *testing.T) {
 		t.Fatal("kept past a day")
 	}
 }
+
+func TestNegativeAnswersLastTheSOAMinimum(t *testing.T) {
+	c, clk := newTestCache()
+	soa := dnsmsg.RR{Name: "example.", Type: dnsmsg.TypeSOA, Class: 1, TTL: 3600,
+		SOA: dnsmsg.SOA{MName: "ns.example.", RName: "h.example.", Minimum: 300}}
+	c.PutNegative("nope.example.", dnsmsg.TypeA, dnsmsg.RcodeNXDomain, soa)
+	clk.wait(299 * time.Second)
+	rrs, rcode, ok := c.Get("nope.example.", dnsmsg.TypeA)
+	if !ok || rcode != dnsmsg.RcodeNXDomain || rrs[0].Type != dnsmsg.TypeSOA || rrs[0].TTL != 1 {
+		t.Fatalf("got %v %d %v", rrs, rcode, ok)
+	}
+	clk.wait(time.Second)
+	if _, _, ok := c.Get("nope.example.", dnsmsg.TypeA); ok {
+		t.Fatal("negative answer outlived the SOA minimum")
+	}
+}
