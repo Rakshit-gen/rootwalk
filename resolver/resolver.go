@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/Rakshit-gen/rootwalk/dnsmsg"
 )
@@ -38,6 +39,10 @@ type Resolver struct {
 	Roots []netip.Addr // RootServers unless set
 	Trace func(string) // called with each step, if set
 	Cache *Cache       // nil means no caching
+
+	// Timeout bounds a whole Resolve, every referral and nested lookup
+	// included. 10 seconds unless set.
+	Timeout time.Duration
 }
 
 const (
@@ -57,6 +62,12 @@ func (r *Resolver) trace(format string, args ...any) {
 // Resolve finds the records of type t for name, following CNAMEs. The
 // answer holds the whole chain, CNAMEs first.
 func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Answer, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	return r.resolve(ctx, dnsmsg.Fqdn(name), t, 0)
 }
 
@@ -201,6 +212,9 @@ func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []ne
 func (r *Resolver) ask(ctx context.Context, servers []netip.Addr, q dnsmsg.Question) (dnsmsg.Message, netip.Addr, error) {
 	var errs []error
 	for _, s := range servers {
+		if err := ctx.Err(); err != nil {
+			return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%s: %w", q, err)
+		}
 		m, err := r.Net.Exchange(ctx, s, q)
 		if err == nil && m.Rcode != dnsmsg.RcodeSuccess && m.Rcode != dnsmsg.RcodeNXDomain {
 			err = fmt.Errorf("%s answered %s with rcode %d", s, q, m.Rcode)
@@ -211,7 +225,7 @@ func (r *Resolver) ask(ctx context.Context, servers []netip.Addr, q dnsmsg.Quest
 		r.trace("%v", err)
 		errs = append(errs, err)
 	}
-	return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%w: %v", ErrNoAnswer, errors.Join(errs...))
+	return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%w: %w", ErrNoAnswer, errors.Join(errs...))
 }
 
 func matching(rrs []dnsmsg.RR, name string, t dnsmsg.Type) []dnsmsg.RR {

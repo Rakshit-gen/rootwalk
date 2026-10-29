@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rakshit-gen/rootwalk/dnsmsg"
 )
@@ -187,5 +188,19 @@ func TestSkipsServersThatFailOrRefuse(t *testing.T) {
 	r.Roots = addrs("10.0.2.1") // example.test's server refuses anything outside its zone
 	if _, err := r.Resolve(ctx, "www.other.test", dnsmsg.TypeA); !errors.Is(err, ErrNoAnswer) {
 		t.Fatalf("got %v, want ErrNoAnswer", err)
+	}
+}
+
+func TestTimeoutCoversTheWholeLookup(t *testing.T) {
+	n, r := world(t)
+	n.delay = 20 * time.Millisecond
+	r.Timeout = 50 * time.Millisecond // enough for two of the three queries
+	start := time.Now()
+	_, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v, want a deadline error", err)
+	}
+	if took := time.Since(start); took > 200*time.Millisecond {
+		t.Fatalf("took %v", took)
 	}
 }

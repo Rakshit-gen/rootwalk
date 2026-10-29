@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rakshit-gen/rootwalk/dnsmsg"
 )
@@ -101,10 +102,16 @@ func (z *authority) answer(q dnsmsg.Question) dnsmsg.Message {
 type network struct {
 	servers map[netip.Addr]func(dnsmsg.Question) dnsmsg.Message
 	queries int
+	delay   time.Duration // how long each query takes
 }
 
-func (n *network) Exchange(_ context.Context, server netip.Addr, q dnsmsg.Question) (dnsmsg.Message, error) {
+func (n *network) Exchange(ctx context.Context, server netip.Addr, q dnsmsg.Question) (dnsmsg.Message, error) {
 	n.queries++
+	select {
+	case <-time.After(n.delay):
+	case <-ctx.Done():
+		return dnsmsg.Message{}, ctx.Err()
+	}
 	s, ok := n.servers[server]
 	if !ok {
 		return dnsmsg.Message{}, errors.New("timeout")
