@@ -188,3 +188,52 @@ func readRR(msg []byte, off int) (RR, int, error) {
 	}
 	return r, end, nil
 }
+
+func (r RR) append(b []byte) ([]byte, error) {
+	b, err := appendName(b, r.Name)
+	if err != nil {
+		return nil, err
+	}
+	b = binary.BigEndian.AppendUint16(b, uint16(r.Type))
+	b = binary.BigEndian.AppendUint16(b, r.Class)
+	b = binary.BigEndian.AppendUint32(b, r.TTL)
+	lenAt := len(b)
+	b = append(b, 0, 0)
+	switch r.Type {
+	case TypeA, TypeAAAA:
+		if !r.Addr.IsValid() || (r.Type == TypeA) != r.Addr.Is4() {
+			return nil, fmt.Errorf("dnsmsg: %s record needs an IPv%s address", r.Type, map[bool]string{true: "4", false: "6"}[r.Type == TypeA])
+		}
+		b = append(b, r.Addr.AsSlice()...)
+	case TypeNS, TypeCNAME, TypePTR:
+		b, err = appendName(b, r.Target)
+	case TypeMX:
+		b = binary.BigEndian.AppendUint16(b, r.Pref)
+		b, err = appendName(b, r.Target)
+	case TypeSOA:
+		if b, err = appendName(b, r.SOA.MName); err == nil {
+			b, err = appendName(b, r.SOA.RName)
+		}
+		for _, n := range []uint32{r.SOA.Serial, r.SOA.Refresh, r.SOA.Retry, r.SOA.Expire, r.SOA.Minimum} {
+			b = binary.BigEndian.AppendUint32(b, n)
+		}
+	case TypeTXT:
+		for _, t := range r.Text {
+			if len(t) > 255 {
+				return nil, fmt.Errorf("dnsmsg: TXT string longer than 255 bytes")
+			}
+			b = append(append(b, byte(len(t))), t...)
+		}
+	default:
+		b = append(b, r.Raw...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	n := len(b) - lenAt - 2
+	if n > 0xffff {
+		return nil, fmt.Errorf("dnsmsg: record data too long")
+	}
+	binary.BigEndian.PutUint16(b[lenAt:], uint16(n))
+	return b, nil
+}
