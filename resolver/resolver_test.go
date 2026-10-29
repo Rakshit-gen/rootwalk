@@ -131,3 +131,25 @@ func TestNamesThatDontExistAndTypesThatArent(t *testing.T) {
 		t.Fatalf("no AAAA: %+v %v", ans, err)
 	}
 }
+
+func TestTheCacheAnswersRepeatsWithoutTheNetwork(t *testing.T) {
+	n, r := world(t)
+	r.Cache, _ = newTestCache()
+	for _, q := range []struct {
+		name string
+		t    dnsmsg.Type
+	}{{"www.example.test", dnsmsg.TypeA}, {"nope.example.test", dnsmsg.TypeA}, {"www.example.test", dnsmsg.TypeAAAA}} {
+		first, err := r.Resolve(ctx, q.name, q.t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := n.queries
+		again, err := r.Resolve(ctx, q.name, q.t)
+		if err != nil || n.queries != before {
+			t.Fatalf("%s %s: %d more queries, %v", q.name, q.t, n.queries-before, err)
+		}
+		if again.Rcode != first.Rcode || len(again.Answers) != len(first.Answers) || len(again.Authority) != len(first.Authority) {
+			t.Fatalf("%s %s: cached %+v, first %+v", q.name, q.t, again, first)
+		}
+	}
+}

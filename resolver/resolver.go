@@ -37,6 +37,7 @@ type Resolver struct {
 	Net   Exchanger
 	Roots []netip.Addr // RootServers unless set
 	Trace func(string) // called with each step, if set
+	Cache *Cache       // nil means no caching
 }
 
 const (
@@ -67,7 +68,7 @@ func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, dept
 			return Answer{}, fmt.Errorf("%s: CNAME loop", name)
 		}
 		seen[strings.ToLower(name)] = true
-		ans, err := r.lookup(ctx, name, t, depth)
+		ans, err := r.cached(ctx, name, t, depth)
 		if err != nil {
 			return Answer{}, err
 		}
@@ -80,6 +81,36 @@ func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, dept
 		name = ans.next
 	}
 	return Answer{}, fmt.Errorf("%s: more than %d CNAMEs", name, maxCNAMEs)
+}
+
+// cached answers from the cache, or looks the name up and stores the result.
+func (r *Resolver) cached(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
+	if r.Cache == nil {
+		return r.lookup(ctx, name, t, depth)
+	}
+	if rrs, rcode, ok := r.Cache.Get(name, t); ok {
+		r.trace("cache has %s %s", name, t)
+		if rrs[0].Type != t { // a negative entry holds only the SOA
+			return Answer{Rcode: rcode, Authority: rrs}, nil
+		}
+		return Answer{Answers: rrs}, nil
+	}
+	if rrs, _, ok := r.Cache.Get(name, dnsmsg.TypeCNAME); ok && t != dnsmsg.TypeCNAME {
+		r.trace("cache has %s CNAME", name)
+		return Answer{Answers: rrs, next: rrs[0].Target}, nil
+	}
+	ans, err := r.lookup(ctx, name, t, depth)
+	if err != nil {
+		return ans, err
+	}
+	// Each record set is cached under its own name, so a chain is reusable from any point.
+	for _, rr := range ans.Answers {
+		r.Cache.Put(rr.Name, rr.Type, matching(ans.Answers, rr.Name, rr.Type))
+	}
+	if len(ans.Answers) == 0 && len(ans.Authority) > 0 {
+		r.Cache.PutNegative(name, t, ans.Rcode, ans.Authority[0])
+	}
+	return ans, nil
 }
 
 func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
