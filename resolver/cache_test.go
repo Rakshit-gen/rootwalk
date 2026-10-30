@@ -82,3 +82,24 @@ func TestClosestFindsTheDeepestUnexpiredZone(t *testing.T) {
 		t.Fatalf("after expiry got %q %v, want com.", z, s)
 	}
 }
+
+func TestTheLeastRecentlyUsedGoesWhenFull(t *testing.T) {
+	c, _ := newTestCache()
+	c.Max = 2
+	a := func(name string) []dnsmsg.RR {
+		return []dnsmsg.RR{{Name: name, Type: dnsmsg.TypeA, TTL: 60, Addr: netip.MustParseAddr("192.0.2.1")}}
+	}
+	c.Put("a.", dnsmsg.TypeA, a("a."))
+	c.Put("b.", dnsmsg.TypeA, a("b."))
+	c.Get("a.", dnsmsg.TypeA) // a is now the most recent
+	c.Put("c.", dnsmsg.TypeA, a("c."))
+	for name, want := range map[string]bool{"a.": true, "b.": false, "c.": true} {
+		if _, _, ok := c.Get(name, dnsmsg.TypeA); ok != want {
+			t.Errorf("%s cached: %v, want %v", name, ok, want)
+		}
+	}
+	c.Put("c.", dnsmsg.TypeA, a("c.")) // replacing doesn't count twice
+	if c.lru.Len() != 2 || len(c.m) != 2 {
+		t.Fatalf("%d in the list, %d in the map", c.lru.Len(), len(c.m))
+	}
+}

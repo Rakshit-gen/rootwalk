@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"container/list"
 	"net/netip"
 	"strings"
 	"sync"
@@ -18,20 +19,26 @@ type cacheKey struct {
 }
 
 type entry struct {
+	key     cacheKey
 	rrs     []dnsmsg.RR
 	rcode   uint8 // RcodeNXDomain for a cached "no such name"
 	expires time.Time
 }
 
-// Cache holds answers until their TTL runs out. Expired entries are only
-// dropped when looked up, which is fine for one machine's queries.
+// Cache holds answers until their TTL runs out, and at most Max of them:
+// past that, the least recently used goes.
 type Cache struct {
+	Max int              // DefaultMax unless set
+	Now func() time.Time // time.Now unless a test sets it
+
 	mu           sync.Mutex
-	m            map[cacheKey]entry
+	m            map[cacheKey]*list.Element // of *entry, most recently used at the front
+	lru          list.List
 	zones        map[string]delegation
-	Now          func() time.Time // time.Now unless a test sets it
 	hits, misses int
 }
+
+const DefaultMax = 100_000
 
 type delegation struct {
 	servers []netip.Addr
@@ -39,7 +46,7 @@ type delegation struct {
 }
 
 func NewCache() *Cache {
-	return &Cache{m: map[cacheKey]entry{}, zones: map[string]delegation{}, Now: time.Now}
+	return &Cache{m: map[cacheKey]*list.Element{}, zones: map[string]delegation{}, Now: time.Now}
 }
 
 func key(name string, t dnsmsg.Type) cacheKey { return cacheKey{strings.ToLower(dnsmsg.Fqdn(name)), t} }
@@ -62,8 +69,18 @@ func (c *Cache) put(name string, t dnsmsg.Type, e entry, ttl time.Duration) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e.expires = c.Now().Add(min(ttl, maxTTL))
-	c.m[key(name, t)] = e
+	e.key, e.expires = key(name, t), c.Now().Add(min(ttl, maxTTL))
+	if old, ok := c.m[e.key]; ok {
+		c.lru.Remove(old)
+	}
+	c.m[e.key] = c.lru.PushFront(&e)
+	limit := c.Max
+	if limit <= 0 {
+		limit = DefaultMax
+	}
+	for c.lru.Len() > limit {
+		delete(c.m, c.lru.Remove(c.lru.Back()).(*entry).key)
+	}
 }
 
 // Get returns what is cached for name and type, with TTLs counted down to
@@ -71,14 +88,18 @@ func (c *Cache) put(name string, t dnsmsg.Type, e entry, ttl time.Duration) {
 func (c *Cache) Get(name string, t dnsmsg.Type) (rrs []dnsmsg.RR, rcode uint8, ok bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	k := key(name, t)
-	e, found := c.m[k]
+	el, found := c.m[key(name, t)]
 	now := c.Now()
-	if !found || !now.Before(e.expires) {
-		delete(c.m, k)
+	if !found || !now.Before(el.Value.(*entry).expires) {
+		if found {
+			delete(c.m, el.Value.(*entry).key)
+			c.lru.Remove(el)
+		}
 		c.misses++
 		return nil, 0, false
 	}
+	c.lru.MoveToFront(el)
+	e := el.Value.(*entry)
 	c.hits++
 	left := uint32(e.expires.Sub(now) / time.Second)
 	out := make([]dnsmsg.RR, len(e.rrs))
