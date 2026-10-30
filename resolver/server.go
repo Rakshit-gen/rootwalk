@@ -67,8 +67,24 @@ type Server struct {
 	// handshake already proves the client is who it says.
 	Rate float64
 
-	limitOnce sync.Once
-	limit     *limiter
+	// MaxInFlight caps the lookups running at once, 1000 unless set. A
+	// query past it gets SERVFAIL straight away rather than piling up.
+	MaxInFlight int
+
+	once     sync.Once
+	limit    *limiter
+	inFlight chan struct{}
+}
+
+func (s *Server) init() {
+	s.once.Do(func() {
+		s.limit = &limiter{rate: s.Rate, now: time.Now}
+		n := s.MaxInFlight
+		if n <= 0 {
+			n = 1000
+		}
+		s.inFlight = make(chan struct{}, n)
+	})
 }
 
 // overRate reports whether a UDP client has sent more than Rate allows.
@@ -76,7 +92,7 @@ func (s *Server) overRate(from net.Addr) bool {
 	if s.Rate <= 0 {
 		return false
 	}
-	s.limitOnce.Do(func() { s.limit = &limiter{rate: s.Rate, now: time.Now} })
+	s.init()
 	ap, err := netip.ParseAddrPort(from.String())
 	return err == nil && !s.limit.allow(ap.Addr())
 }
@@ -95,10 +111,20 @@ func (s *Server) allowed(a netip.Addr) bool {
 }
 
 // answer is Reply for a client at from, or REFUSED if it may not ask.
+// It holds a MaxInFlight slot while the lookup runs.
 func (s *Server) answer(ctx context.Context, from net.Addr, q dnsmsg.Message) dnsmsg.Message {
 	if ap, err := netip.ParseAddrPort(from.String()); err != nil || !s.allowed(ap.Addr()) {
 		m := replyTo(q)
 		m.Rcode = dnsmsg.RcodeRefused
+		return m
+	}
+	s.init()
+	select {
+	case s.inFlight <- struct{}{}:
+		defer func() { <-s.inFlight }()
+	default:
+		m := replyTo(q)
+		m.Rcode = dnsmsg.RcodeServFail
 		return m
 	}
 	return s.Resolver.Reply(ctx, q)

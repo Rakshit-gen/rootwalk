@@ -200,3 +200,23 @@ func TestClientsOverTheRateAreSentToTCP(t *testing.T) {
 		t.Fatalf("%d of 6 truncated (want 2), %d answered (want 4)", truncated, answered)
 	}
 }
+
+func TestQueriesPastMaxInFlightFailFast(t *testing.T) {
+	n, r := world(t)
+	n.delay = 50 * time.Millisecond
+	s := &Server{Resolver: r, MaxInFlight: 1}
+	local := net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:5000"))
+	done := make(chan dnsmsg.Message)
+	go func() { done <- s.answer(ctx, local, dnsmsg.NewQuery(1, "www.example.test", dnsmsg.TypeA, 0)) }()
+	time.Sleep(20 * time.Millisecond) // the first is now in flight
+	start := time.Now()
+	if m := s.answer(ctx, local, dnsmsg.NewQuery(2, "example.test", dnsmsg.TypeA, 0)); m.Rcode != dnsmsg.RcodeServFail || time.Since(start) > 10*time.Millisecond {
+		t.Fatalf("second query: rcode %d after %v", m.Rcode, time.Since(start))
+	}
+	if m := <-done; m.Rcode != dnsmsg.RcodeSuccess {
+		t.Fatalf("first query: rcode %d", m.Rcode)
+	}
+	if m := s.answer(ctx, local, dnsmsg.NewQuery(3, "example.test", dnsmsg.TypeA, 0)); m.Rcode != dnsmsg.RcodeSuccess {
+		t.Fatalf("slot not given back: rcode %d", m.Rcode)
+	}
+}
