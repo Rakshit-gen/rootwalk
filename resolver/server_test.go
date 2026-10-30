@@ -134,3 +134,29 @@ func TestRepliesSpeakEDNSOnlyToClientsThatDo(t *testing.T) {
 		t.Fatalf("EDNS version 1 got %+v, want BADVERS", m)
 	}
 }
+
+func TestOnlyAllowedClientsGetAnswers(t *testing.T) {
+	n, r := world(t)
+	s := &Server{Resolver: r}
+	q := dnsmsg.NewQuery(1, "www.example.test", dnsmsg.TypeA, 0)
+	for from, want := range map[string]uint8{
+		"127.0.0.1:5000": dnsmsg.RcodeSuccess, "[::1]:5000": dnsmsg.RcodeSuccess,
+		"192.168.1.20:5000": dnsmsg.RcodeSuccess, "[fe80::1]:5000": dnsmsg.RcodeSuccess,
+		"203.0.113.9:5000": dnsmsg.RcodeRefused, "[2001:db8::1]:5000": dnsmsg.RcodeRefused,
+	} {
+		if m := s.answer(ctx, net.UDPAddrFromAddrPort(netip.MustParseAddrPort(from)), q); m.Rcode != want {
+			t.Errorf("%s: rcode %d, want %d", from, m.Rcode, want)
+		}
+	}
+	s.Allow = []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}
+	before := n.queries
+	if m := s.answer(ctx, net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:5000")), q); m.Rcode != dnsmsg.RcodeRefused {
+		t.Errorf("loopback outside Allow got rcode %d", m.Rcode)
+	}
+	if n.queries != before {
+		t.Error("a refused client's query reached the network")
+	}
+	if m := s.answer(ctx, net.UDPAddrFromAddrPort(netip.MustParseAddrPort("203.0.113.9:5000")), q); m.Rcode != dnsmsg.RcodeSuccess {
+		t.Errorf("an allowed client got rcode %d", m.Rcode)
+	}
+}

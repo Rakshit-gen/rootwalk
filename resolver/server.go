@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/Rakshit-gen/rootwalk/dnsmsg"
@@ -13,11 +14,7 @@ import (
 // one question, looked up from the root, with the outcome's rcode. A lookup
 // that fails becomes SERVFAIL so the client can try elsewhere.
 func (r *Resolver) Reply(ctx context.Context, q dnsmsg.Message) dnsmsg.Message {
-	m := dnsmsg.Message{
-		Header: dnsmsg.Header{ID: q.ID, Response: true, Opcode: q.Opcode,
-			RecursionDesired: q.RecursionDesired, RecursionAvailable: true},
-		Questions: q.Questions,
-	}
+	m := replyTo(q)
 	e, edns := q.EDNS()
 	if edns {
 		m.Additional = []dnsmsg.RR{{Name: ".", Type: dnsmsg.TypeOPT, Class: udpSize}}
@@ -44,9 +41,46 @@ func (r *Resolver) Reply(ctx context.Context, q dnsmsg.Message) dnsmsg.Message {
 	return m
 }
 
+// replyTo starts a reply to q: its ID, question and RD flag, recursion available.
+func replyTo(q dnsmsg.Message) dnsmsg.Message {
+	return dnsmsg.Message{
+		Header: dnsmsg.Header{ID: q.ID, Response: true, Opcode: q.Opcode,
+			RecursionDesired: q.RecursionDesired, RecursionAvailable: true},
+		Questions: q.Questions,
+	}
+}
+
 // Server answers DNS clients over UDP and TCP with Resolver's lookups.
 type Server struct {
 	Resolver *Resolver
+
+	// Allow is who may ask. Empty means loopback and private addresses
+	// only, so a server bound to a public address isn't an open resolver
+	// by accident.
+	Allow []netip.Prefix
+}
+
+func (s *Server) allowed(a netip.Addr) bool {
+	a = a.Unmap()
+	if len(s.Allow) == 0 {
+		return a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast()
+	}
+	for _, p := range s.Allow {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// answer is Reply for a client at from, or REFUSED if it may not ask.
+func (s *Server) answer(ctx context.Context, from net.Addr, q dnsmsg.Message) dnsmsg.Message {
+	if ap, err := netip.ParseAddrPort(from.String()); err != nil || !s.allowed(ap.Addr()) {
+		m := replyTo(q)
+		m.Rcode = dnsmsg.RcodeRefused
+		return m
+	}
+	return s.Resolver.Reply(ctx, q)
 }
 
 // ServeUDP answers queries arriving on conn until ctx is done, each in its
@@ -70,7 +104,7 @@ func (s *Server) ServeUDP(ctx context.Context, conn net.PacketConn) error {
 			continue // not DNS, or not worth a reply
 		}
 		go func() {
-			if b, err := fitUDP(s.Resolver.Reply(ctx, q), q); err == nil {
+			if b, err := fitUDP(s.answer(ctx, from, q), q); err == nil {
 				conn.WriteTo(b, from)
 			}
 		}()
@@ -127,7 +161,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 		if err != nil {
 			return
 		}
-		out, err := s.Resolver.Reply(ctx, q).Pack()
+		out, err := s.answer(ctx, conn.RemoteAddr(), q).Pack()
 		if err != nil || len(out) > 65535 {
 			return
 		}
