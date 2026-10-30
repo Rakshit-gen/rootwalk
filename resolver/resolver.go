@@ -151,9 +151,10 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			r.trace("%s answered %s from %s", server, q, zone)
 			return Answer{Rcode: m.Rcode, Answers: answers}, nil
 		}
-		if chain, end := cnames(m.Answers, name); len(chain) > 0 && t != dnsmsg.TypeCNAME {
+		if chain, end := cnames(m.Answers, name, zone); len(chain) > 0 && t != dnsmsg.TypeCNAME {
 			r.trace("%s answered %s with a CNAME", server, q)
-			if answers := matching(m.Answers, end, t); len(answers) > 0 {
+			// Records for a target outside the server's zone aren't its to give.
+			if answers := matching(m.Answers, end, t); len(answers) > 0 && inZone(end, zone) {
 				return Answer{Rcode: m.Rcode, Answers: append(chain, answers...)}, nil
 			}
 			return Answer{Rcode: m.Rcode, Answers: chain, next: end}, nil
@@ -257,10 +258,14 @@ func matchingType(rrs []dnsmsg.RR, t dnsmsg.Type) []dnsmsg.RR {
 }
 
 // cnames follows CNAME records for name within one reply, returning the
-// chain and the name it ends at.
-func cnames(rrs []dnsmsg.RR, name string) ([]dnsmsg.RR, string) {
+// chain and the name it ends at. It stops at the first target outside zone,
+// the zone of the server that sent the reply.
+func cnames(rrs []dnsmsg.RR, name, zone string) ([]dnsmsg.RR, string) {
 	var chain []dnsmsg.RR
 	for range maxCNAMEs {
+		if len(chain) > 0 && !inZone(name, zone) {
+			break
+		}
 		c := matching(rrs, name, dnsmsg.TypeCNAME)
 		if len(c) == 0 {
 			break

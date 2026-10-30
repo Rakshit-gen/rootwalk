@@ -205,3 +205,28 @@ func TestTimeoutCoversTheWholeLookup(t *testing.T) {
 		t.Fatalf("took %v", took)
 	}
 }
+
+func TestIgnoresRecordsForCNAMETargetsOutsideTheServersZone(t *testing.T) {
+	n, r := world(t)
+	n.add("10.0.1.1", zone(t, "test.",
+		"example.test. 3600 NS ns1.example.test.", "ns1.example.test. 3600 A 10.0.2.1",
+		"other.test. 3600 NS ns.other.test.", "ns.other.test. 3600 A 10.0.3.1"))
+	n.add("10.0.3.1", zone(t, "other.test.",
+		"bank.other.test. 300 A 192.0.2.10",
+		"bank.other.test. 300 CNAME wrong.other.test.")) // never followed: the A answers first
+	n.servers[addrs("10.0.2.1")[0]] = func(q dnsmsg.Question) dnsmsg.Message {
+		return dnsmsg.Message{Header: dnsmsg.Header{Response: true, Authoritative: true}, Questions: []dnsmsg.Question{q},
+			Answers: []dnsmsg.RR{
+				rr(t, "evil.example.test. 300 CNAME bank.other.test."),
+				rr(t, "bank.other.test. 300 A 203.0.113.66"), // example.test's server has no say over other.test
+			}}
+	}
+	r.Cache, _ = newTestCache()
+	ans, err := r.Resolve(ctx, "evil.example.test", dnsmsg.TypeA)
+	if err != nil || len(ans.Answers) != 2 || ans.Answers[1].Addr.String() != "192.0.2.10" {
+		t.Fatalf("got %v %v", ans.Answers, err)
+	}
+	if rrs, _, _ := r.Cache.Get("bank.other.test", dnsmsg.TypeA); len(rrs) != 1 || rrs[0].Addr.String() != "192.0.2.10" {
+		t.Fatalf("cache has %v", rrs)
+	}
+}
