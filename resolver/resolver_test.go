@@ -293,3 +293,21 @@ func TestANameserverBehindACNAMEStillGetsItsAddress(t *testing.T) {
 		t.Fatal("sent a query to the zero address taken from a CNAME")
 	}
 }
+
+func TestLooksUpIPv6AddressesOfGluelessNameservers(t *testing.T) {
+	n, r := world(t)
+	n.add("10.0.1.1", zone(t, "test.",
+		"example.test. 3600 NS ns1.example.test.", "ns1.example.test. 3600 A 10.0.2.1",
+		"other.test. 3600 NS v6only.example.test."))
+	n.add("10.0.2.1", zone(t, "example.test.",
+		"example.test. 300 SOA ns1.example.test. h.example.test. 60",
+		"v6only.example.test. 300 AAAA 2001:db8::99"))
+	n.add("2001:db8::99", zone(t, "other.test.", "www.other.test. 300 A 192.0.2.33"))
+	if _, err := r.Resolve(ctx, "www.other.test", dnsmsg.TypeA); err == nil {
+		t.Fatal("reached an IPv6-only nameserver with IPv6 off")
+	}
+	r.IPv6 = true
+	if ans, err := r.Resolve(ctx, "www.other.test", dnsmsg.TypeA); err != nil || len(ans.Answers) != 1 {
+		t.Fatalf("%v %v", ans, err)
+	}
+}

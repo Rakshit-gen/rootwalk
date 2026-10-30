@@ -224,22 +224,29 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 }
 
 // addressesOf looks up the nameservers' addresses, stopping at the first
-// that resolves: one working server is enough to carry on. Only the first
+// that resolves: one working server is enough to carry on. With IPv6 on, a
+// nameserver without an IPv4 address is looked up again for IPv6. Only the first
 // few are tried, so a referral to hundreds of names that don't resolve
 // can't turn one query into hundreds (the NXNSAttack).
 func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []netip.Addr {
 	for _, n := range ns[:min(len(ns), maxGlueless)] {
-		r.trace("looking up %s's address", n)
-		ans, err := r.resolve(ctx, n, dnsmsg.TypeA, depth+1)
-		if err != nil {
-			continue
+		types := []dnsmsg.Type{dnsmsg.TypeA}
+		if r.IPv6 {
+			types = append(types, dnsmsg.TypeAAAA)
 		}
-		var out []netip.Addr
-		for _, rr := range matchingType(ans.Answers, dnsmsg.TypeA) { // not the CNAMEs on the way
-			out = append(out, rr.Addr)
-		}
-		if len(out) > 0 {
-			return out
+		for _, t := range types {
+			r.trace("looking up %s's %s address", n, t)
+			ans, err := r.resolve(ctx, n, t, depth+1)
+			if err != nil {
+				continue
+			}
+			var out []netip.Addr
+			for _, rr := range matchingType(ans.Answers, t) { // not the CNAMEs on the way
+				out = append(out, rr.Addr)
+			}
+			if len(out) > 0 {
+				return out
+			}
 		}
 	}
 	return nil
