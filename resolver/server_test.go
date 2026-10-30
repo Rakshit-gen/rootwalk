@@ -58,8 +58,9 @@ func serving(t *testing.T, r *Resolver) (Net, netip.Addr) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go r.ServeTCP(ctx, ln)
-	go r.ServeUDP(ctx, pc)
+	s := &Server{Resolver: r}
+	go s.ServeTCP(ctx, ln)
+	go s.ServeUDP(ctx, pc)
 	return Net{Port: uint16(pc.LocalAddr().(*net.UDPAddr).Port)}, netip.MustParseAddr("127.0.0.1")
 }
 

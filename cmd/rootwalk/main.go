@@ -87,8 +87,9 @@ func serve(r *resolver.Resolver, addr string, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stderr, "serving on %s, UDP and TCP\n", addr)
 	errs := make(chan error, 2)
-	go func() { errs <- r.ServeTCP(ctx, ln) }()
-	go func() { errs <- r.ServeUDP(ctx, pc) }()
+	s := &resolver.Server{Resolver: r}
+	go func() { errs <- s.ServeTCP(ctx, ln) }()
+	go func() { errs <- s.ServeUDP(ctx, pc) }()
 	if err := <-errs; err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

@@ -44,9 +44,14 @@ func (r *Resolver) Reply(ctx context.Context, q dnsmsg.Message) dnsmsg.Message {
 	return m
 }
 
+// Server answers DNS clients over UDP and TCP with Resolver's lookups.
+type Server struct {
+	Resolver *Resolver
+}
+
 // ServeUDP answers queries arriving on conn until ctx is done, each in its
 // own goroutine so a slow lookup doesn't hold up the rest.
-func (r *Resolver) ServeUDP(ctx context.Context, conn net.PacketConn) error {
+func (s *Server) ServeUDP(ctx context.Context, conn net.PacketConn) error {
 	go func() {
 		<-ctx.Done()
 		conn.Close()
@@ -65,7 +70,7 @@ func (r *Resolver) ServeUDP(ctx context.Context, conn net.PacketConn) error {
 			continue // not DNS, or not worth a reply
 		}
 		go func() {
-			if b, err := fitUDP(r.Reply(ctx, q), q); err == nil {
+			if b, err := fitUDP(s.Resolver.Reply(ctx, q), q); err == nil {
 				conn.WriteTo(b, from)
 			}
 		}()
@@ -91,7 +96,7 @@ func fitUDP(m dnsmsg.Message, q dnsmsg.Message) ([]byte, error) {
 // ServeTCP answers queries on connections from ln until ctx is done. A
 // client may send several queries on one connection; it is closed after
 // idle seconds without one.
-func (r *Resolver) ServeTCP(ctx context.Context, ln net.Listener) error {
+func (s *Server) ServeTCP(ctx context.Context, ln net.Listener) error {
 	go func() {
 		<-ctx.Done()
 		ln.Close()
@@ -104,13 +109,13 @@ func (r *Resolver) ServeTCP(ctx context.Context, ln net.Listener) error {
 			}
 			return err
 		}
-		go r.serveConn(ctx, conn)
+		go s.serveConn(ctx, conn)
 	}
 }
 
 const idle = 10 * time.Second
 
-func (r *Resolver) serveConn(ctx context.Context, conn net.Conn) {
+func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	for {
 		conn.SetDeadline(time.Now().Add(idle))
@@ -122,7 +127,7 @@ func (r *Resolver) serveConn(ctx context.Context, conn net.Conn) {
 		if err != nil {
 			return
 		}
-		out, err := r.Reply(ctx, q).Pack()
+		out, err := s.Resolver.Reply(ctx, q).Pack()
 		if err != nil || len(out) > 65535 {
 			return
 		}
