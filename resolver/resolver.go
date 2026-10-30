@@ -396,3 +396,34 @@ func inZone(name, zone string) bool {
 	name, zone = strings.ToLower(dnsmsg.Fqdn(name)), strings.ToLower(dnsmsg.Fqdn(zone))
 	return zone == "." || name == zone || strings.HasSuffix(name, "."+zone)
 }
+
+// labels splits a name into its labels, leaving escaped dots inside them.
+func labels(name string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(name); i++ {
+		switch name[i] {
+		case '\\':
+			i++
+		case '.':
+			if i > start {
+				out = append(out, name[start:i])
+			}
+			start = i + 1
+		}
+	}
+	if start < len(name) {
+		out = append(out, name[start:])
+	}
+	return out
+}
+
+// below returns the name one label longer than zone on the way to name:
+// below("a.b.example.com.", "com.") is "example.com.".
+func below(name, zone string) string {
+	l, z := labels(name), len(labels(zone))
+	if z >= len(l) {
+		return dnsmsg.Fqdn(name)
+	}
+	return strings.Join(l[len(l)-z-1:], ".") + "."
+}

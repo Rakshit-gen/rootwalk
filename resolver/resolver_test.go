@@ -355,3 +355,18 @@ func TestConcurrentLookupsForOneNameShareTheWork(t *testing.T) {
 		t.Fatalf("10 lookups sent %d queries, want 3", n.queries)
 	}
 }
+
+func TestBelow(t *testing.T) {
+	for _, c := range []struct{ name, zone, want string }{
+		{"a.b.example.com.", ".", "com."},
+		{"a.b.example.com.", "com.", "example.com."},
+		{"a.b.example.com.", "example.com.", "b.example.com."},
+		{"a.b.example.com.", "b.example.com.", "a.b.example.com."},
+		{"example.com.", "example.com.", "example.com."},
+		{`a\.b.example.com.`, "example.com.", `a\.b.example.com.`},
+	} {
+		if got := below(c.name, c.zone); got != c.want {
+			t.Errorf("below(%q, %q) = %q, want %q", c.name, c.zone, got, c.want)
+		}
+	}
+}
