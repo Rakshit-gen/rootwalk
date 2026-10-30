@@ -94,7 +94,7 @@ func (c *Cache) Get(name string, t dnsmsg.Type) (rrs []dnsmsg.RR, rcode uint8, o
 	el, found := c.m[key(name, t)]
 	now := c.Now()
 	if !found || !now.Before(el.Value.(*entry).expires) {
-		if found {
+		if found && !now.Before(el.Value.(*entry).expires.Add(staleFor)) {
 			delete(c.m, el.Value.(*entry).key)
 			c.lru.Remove(el)
 		}
@@ -108,6 +108,31 @@ func (c *Cache) Get(name string, t dnsmsg.Type) (rrs []dnsmsg.RR, rcode uint8, o
 	out := make([]dnsmsg.RR, len(e.rrs))
 	for i, r := range e.rrs {
 		r.TTL = left
+		out[i] = r
+	}
+	return out, e.rcode, true
+}
+
+// staleFor is how long an expired entry is kept for GetStale, and
+// staleTTL the TTL it is handed out with (RFC 8767 suggests both).
+const (
+	staleFor = 24 * time.Hour
+	staleTTL = 30
+)
+
+// GetStale returns an entry that has expired in the last day, for when
+// every server for it has stopped answering.
+func (c *Cache) GetStale(name string, t dnsmsg.Type) (rrs []dnsmsg.RR, rcode uint8, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, found := c.m[key(name, t)]
+	if !found || !c.Now().Before(el.Value.(*entry).expires.Add(staleFor)) {
+		return nil, 0, false
+	}
+	e := el.Value.(*entry)
+	out := make([]dnsmsg.RR, len(e.rrs))
+	for i, r := range e.rrs {
+		r.TTL = staleTTL
 		out[i] = r
 	}
 	return out, e.rcode, true

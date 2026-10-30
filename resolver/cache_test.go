@@ -121,3 +121,19 @@ func TestZonesAreCappedAtATenthOfMax(t *testing.T) {
 		t.Fatal("the newest zone was dropped")
 	}
 }
+
+func TestStaleEntriesLastADayPastTheirTTL(t *testing.T) {
+	c, clock := newTestCache()
+	c.Put("a.", dnsmsg.TypeA, []dnsmsg.RR{{Name: "a.", Type: dnsmsg.TypeA, TTL: 60, Addr: netip.MustParseAddr("192.0.2.1")}})
+	clock.wait(time.Hour)
+	if _, _, ok := c.Get("a.", dnsmsg.TypeA); ok {
+		t.Fatal("Get returned an expired entry")
+	}
+	if rrs, _, ok := c.GetStale("a.", dnsmsg.TypeA); !ok || rrs[0].TTL != staleTTL {
+		t.Fatalf("GetStale an hour on: %v %v", rrs, ok)
+	}
+	clock.wait(staleFor)
+	if _, _, ok := c.GetStale("a.", dnsmsg.TypeA); ok {
+		t.Fatal("GetStale a day past expiry still answered")
+	}
+}
