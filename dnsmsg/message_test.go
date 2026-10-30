@@ -55,12 +55,12 @@ func TestPackCompressesRepeatedNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 12 header, 21 question, 20 answers of pointer+10+4, then "\x07Example" and a pointer, 10, and the target in full.
-	if len(b) != 12+21+20*16+10+10+16 {
+	// 12 header, 21 question, 20 answers of pointer+10+4, then "\x07Example" and a pointer, 10, and "\x02ns" and a pointer.
+	if len(b) != 12+21+20*16+10+10+5 {
 		t.Fatalf("%d bytes", len(b))
 	}
 	got, err := Unpack(b)
-	if err != nil || !reflect.DeepEqual(got.Answers, m.Answers) || got.Authority[0].Name != "Example.com." {
+	if err != nil || !reflect.DeepEqual(got.Answers, m.Answers) || !reflect.DeepEqual(got.Authority, m.Authority) {
 		t.Fatalf("round trip: %v\n%+v", err, got)
 	}
 }

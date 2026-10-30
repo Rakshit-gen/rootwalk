@@ -205,14 +205,15 @@ func (r RR) append(b []byte, c compression) ([]byte, error) {
 			return nil, fmt.Errorf("dnsmsg: %s record needs an IPv%s address", r.Type, map[bool]string{true: "4", false: "6"}[r.Type == TypeA])
 		}
 		b = append(b, r.Addr.AsSlice()...)
+	// RFC 3597: only these original types may have their data compressed.
 	case TypeNS, TypeCNAME, TypePTR:
-		b, err = appendName(b, r.Target)
+		b, err = c.appendName(b, r.Target)
 	case TypeMX:
 		b = binary.BigEndian.AppendUint16(b, r.Pref)
-		b, err = appendName(b, r.Target)
+		b, err = c.appendName(b, r.Target)
 	case TypeSOA:
-		if b, err = appendName(b, r.SOA.MName); err == nil {
-			b, err = appendName(b, r.SOA.RName)
+		if b, err = c.appendName(b, r.SOA.MName); err == nil {
+			b, err = c.appendName(b, r.SOA.RName)
 		}
 		for _, n := range []uint32{r.SOA.Serial, r.SOA.Refresh, r.SOA.Retry, r.SOA.Expire, r.SOA.Minimum} {
 			b = binary.BigEndian.AppendUint32(b, n)
