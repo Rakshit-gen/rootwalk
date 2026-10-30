@@ -1,4 +1,4 @@
-.PHONY: build test fuzz bench lint
+.PHONY: build test fuzz bench bench-go lint
 
 build:
 	go build -o rootwalk ./cmd/rootwalk
@@ -11,6 +11,9 @@ fuzz:
 
 bench:
 	scripts/bench.sh
+
+bench-go:
+	go test -run '^$$' -bench . -benchmem ./dnsmsg ./resolver
 
 lint:
 	test -z "$$(gofmt -l .)"
