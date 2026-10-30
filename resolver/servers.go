@@ -1,7 +1,10 @@
 package resolver
 
 import (
+	"cmp"
+	"math/rand/v2"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 )
@@ -37,4 +40,15 @@ func (t *rtts) get(s netip.Addr) (time.Duration, bool) {
 	defer t.mu.Unlock()
 	d, ok := t.m[s]
 	return d, ok
+}
+
+// order returns servers fastest first. Servers never asked go first, in
+// random order, so each gets tried and the load spreads across them.
+func (t *rtts) order(servers []netip.Addr) []netip.Addr {
+	out := slices.Clone(servers)
+	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	slices.SortStableFunc(out, func(a, b netip.Addr) int { return cmp.Compare(t.m[a], t.m[b]) })
+	return out
 }

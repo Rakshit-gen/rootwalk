@@ -209,11 +209,11 @@ func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []ne
 	return nil
 }
 
-// ask tries the servers in turn until one gives a reply worth using. A
+// ask tries the servers, fastest known first, until one gives a reply worth using. A
 // server that fails, refuses or doesn't understand the query is skipped.
 func (r *Resolver) ask(ctx context.Context, servers []netip.Addr, q dnsmsg.Question) (dnsmsg.Message, netip.Addr, error) {
 	var errs []error
-	for _, s := range servers {
+	for _, s := range r.rtt.order(servers) {
 		if err := ctx.Err(); err != nil {
 			return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%s: %w", q, err)
 		}

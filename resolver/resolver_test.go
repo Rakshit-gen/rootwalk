@@ -31,7 +31,8 @@ func TestWalksDownFromTheRoot(t *testing.T) {
 
 func TestTriesTheNextServerWhenOneIsDown(t *testing.T) {
 	n, r := world(t)
-	r.Roots = addrs("10.9.9.9", "10.0.0.1") // the first doesn't exist
+	r.Roots = addrs("10.9.9.9", "10.0.0.1")      // the first doesn't exist
+	r.rtt.observe(r.Roots[1], time.Second, true) // so the untried dead one is asked first
 	if _, err := r.Resolve(ctx, "example.test", dnsmsg.TypeA); err != nil {
 		t.Fatal(err)
 	}
