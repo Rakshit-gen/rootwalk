@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Rakshit-gen/rootwalk/dnsmsg"
@@ -51,10 +52,25 @@ const (
 	maxReferrals = 16
 	maxDepth     = 8 // nested lookups for nameserver addresses
 	maxCNAMEs    = 8
-	maxGlueless  = 4 // nameservers looked up per referral that came without glue
+	maxGlueless  = 4  // nameservers looked up per referral that came without glue
+	maxQueries   = 64 // sent for one Resolve, nested lookups and retries included
 )
 
-var ErrNoAnswer = errors.New("no server gave a usable answer")
+var (
+	ErrNoAnswer = errors.New("no server gave a usable answer")
+	ErrBudget   = fmt.Errorf("sent %d queries without an answer", maxQueries)
+)
+
+// budget counts the queries one Resolve may still send. It rides in the
+// context so nested lookups draw from the same one.
+type budget struct{ left atomic.Int32 }
+
+type budgetKey struct{}
+
+func spend(ctx context.Context) bool {
+	b, ok := ctx.Value(budgetKey{}).(*budget)
+	return !ok || b.left.Add(-1) >= 0
+}
 
 func (r *Resolver) trace(format string, args ...any) {
 	if r.Trace != nil {
@@ -71,7 +87,9 @@ func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Ans
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return r.resolve(ctx, dnsmsg.Fqdn(name), t, 0)
+	b := &budget{}
+	b.left.Store(maxQueries)
+	return r.resolve(context.WithValue(ctx, budgetKey{}, b), dnsmsg.Fqdn(name), t, 0)
 }
 
 func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
@@ -220,6 +238,9 @@ func (r *Resolver) ask(ctx context.Context, servers []netip.Addr, q dnsmsg.Quest
 	for _, s := range r.rtt.order(servers) {
 		if err := ctx.Err(); err != nil {
 			return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%s: %w", q, err)
+		}
+		if !spend(ctx) {
+			return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%s: %w", q, ErrBudget)
 		}
 		start := time.Now()
 		actx, cancel := context.WithTimeout(ctx, r.rtt.timeout(s))

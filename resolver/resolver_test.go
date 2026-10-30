@@ -247,3 +247,16 @@ func TestAReferralToManyMissingNameserversCostsLittle(t *testing.T) {
 		t.Fatalf("one lookup sent %d queries", n.queries)
 	}
 }
+
+func TestOneLookupSendsAtMostMaxQueries(t *testing.T) {
+	n, r := world(t)
+	// Every root is down, so each referral step tries all of them.
+	r.Roots = nil
+	for i := range 100 {
+		r.Roots = append(r.Roots, netip.AddrFrom4([4]byte{10, 9, 0, byte(i)}))
+	}
+	_, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA)
+	if !errors.Is(err, ErrBudget) || n.queries != maxQueries {
+		t.Fatalf("%d queries, %v", n.queries, err)
+	}
+}
