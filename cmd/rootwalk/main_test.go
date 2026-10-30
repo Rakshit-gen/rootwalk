@@ -58,9 +58,21 @@ func TestLookups(t *testing.T) {
 
 func TestUsageErrors(t *testing.T) {
 	for _, args := range [][]string{{}, {"a", "A", "extra"}, {"a", "NOTATYPE"}, {"-nope"}, {"serve", "extra"},
-		{"serve", "-allow", "not-a-prefix"}, {"-short", "-json", "a"}} {
+		{"serve", "-allow", "not-a-prefix"}, {"-short", "-json", "a"}, {"-x", "not-an-ip"}, {"-x", "192.0.2.1", "A"}} {
 		if code, _, _ := rootwalk(args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+}
+
+func TestReverseName(t *testing.T) {
+	for in, want := range map[string]string{
+		"192.0.2.1":          "1.2.0.192.in-addr.arpa.",
+		"::ffff:192.0.2.1":   "1.2.0.192.in-addr.arpa.",
+		"2001:db8::567:89ab": "b.a.9.8.7.6.5.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.",
+	} {
+		if got := reverseName(netip.MustParseAddr(in)); got != want {
+			t.Errorf("%s: %s, want %s", in, got, want)
 		}
 	}
 }

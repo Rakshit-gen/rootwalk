@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,7 @@ import (
 const usage = `usage:
   rootwalk [-trace] [-short|-json] [-6] [-no-minimise] [-timeout 10s] name [type]
                                                     look a name up (type A unless given)
+  rootwalk -x [flags] address                       look up the name for an IP address
   rootwalk serve [-trace] [-6] [-no-minimise] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...] [-rate 100] [-log]
                                                     answer other programs' queries, with a cache
 `
@@ -42,6 +44,7 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 	trace := fs.Bool("trace", false, "print each server asked and what it said")
 	short := fs.Bool("short", false, "print only the data of the final records, like dig +short")
+	reverse := fs.Bool("x", false, "the argument is an IP address: look up its PTR record")
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
 	timeout := fs.Duration("timeout", 10*time.Second, "give up on a lookup after this long")
 	v6 := fs.Bool("6", false, "reach nameservers over IPv6 too")
@@ -82,7 +85,15 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 		return 2
 	}
 	t := dnsmsg.TypeA
-	if fs.NArg() == 2 {
+	name := fs.Arg(0)
+	if *reverse {
+		addr, err := netip.ParseAddr(name)
+		if err != nil || fs.NArg() != 1 {
+			fmt.Fprintln(stderr, "-x takes one IP address")
+			return 2
+		}
+		name, t = reverseName(addr), dnsmsg.TypePTR
+	} else if fs.NArg() == 2 {
 		var err error
 		if t, err = dnsmsg.ParseType(fs.Arg(1)); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -99,7 +110,7 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 	case *asJSON:
 		out = jsonOut
 	}
-	return query(r, fs.Arg(0), t, out, stdout, stderr)
+	return query(r, name, t, out, stdout, stderr)
 }
 
 func serve(s *resolver.Server, addr string, stderr io.Writer) int {
@@ -126,6 +137,23 @@ func serve(s *resolver.Server, addr string, stderr io.Writer) int {
 	hits, misses := s.Resolver.Cache.Stats()
 	fmt.Fprintf(stderr, "stopped; cache answered %d of %d lookups\n", hits, hits+misses)
 	return 0
+}
+
+// reverseName is the in-addr.arpa or ip6.arpa name for an address.
+func reverseName(a netip.Addr) string {
+	a = a.Unmap()
+	var parts []string
+	b := a.AsSlice()
+	if a.Is4() {
+		for i := len(b) - 1; i >= 0; i-- {
+			parts = append(parts, strconv.Itoa(int(b[i])))
+		}
+		return strings.Join(parts, ".") + ".in-addr.arpa."
+	}
+	for i := len(b) - 1; i >= 0; i-- {
+		parts = append(parts, strconv.FormatUint(uint64(b[i]&0xf), 16), strconv.FormatUint(uint64(b[i]>>4), 16))
+	}
+	return strings.Join(parts, ".") + ".ip6.arpa."
 }
 
 // An output writes the answer to name's type t lookup.
