@@ -46,6 +46,7 @@ func TestLookups(t *testing.T) {
 		{[]string{"nope.example.test"}, 0, "; nope.example.test. doesn't exist\n"},
 		{[]string{"-json", "www.example.test"}, 0, `{"name":"www.example.test.","type":"A","rcode":"NOERROR",` +
 			`"answers":[{"name":"www.example.test.","ttl":60,"type":"A","data":"192.0.2.1"}],"authority":[],"ms":`},
+		{[]string{"-version"}, 0, "rootwalk dev\n"},
 		{[]string{"-short", "www.example.test"}, 0, "192.0.2.1\n"},
 		{[]string{"-short", "nope.example.test"}, 0, ""},
 	} {

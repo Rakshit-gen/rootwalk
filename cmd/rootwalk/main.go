@@ -21,10 +21,14 @@ import (
 	"github.com/Rakshit-gen/rootwalk/resolver"
 )
 
+// version is set by the release build.
+var version = "dev"
+
 const usage = `usage:
   rootwalk [-trace] [-short|-json] [-6] [-no-minimise] [-timeout 10s] name [type]
                                                     look a name up (type A unless given)
   rootwalk -x [flags] address                       look up the name for an IP address
+  rootwalk -version
   rootwalk serve [-trace] [-6] [-no-minimise] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...] [-rate 100] [-log]
                                                     answer other programs' queries, with a cache
 `
@@ -44,6 +48,7 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 	trace := fs.Bool("trace", false, "print each server asked and what it said")
 	short := fs.Bool("short", false, "print only the data of the final records, like dig +short")
+	showVersion := fs.Bool("version", false, "print the version and exit")
 	reverse := fs.Bool("x", false, "the argument is an IP address: look up its PTR record")
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
 	timeout := fs.Duration("timeout", 10*time.Second, "give up on a lookup after this long")
@@ -55,6 +60,10 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 	addr := fs.String("addr", "127.0.0.1:5353", "where serve listens, UDP and TCP")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintln(stdout, "rootwalk", version)
+		return 0
 	}
 	// A cache even for one lookup, so a CNAME into a zone already walked starts there.
 	r := &resolver.Resolver{Net: network, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6, NoMinimise: *full}
