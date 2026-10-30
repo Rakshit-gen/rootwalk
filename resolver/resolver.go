@@ -215,7 +215,10 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			r.trace("%s says %s doesn't exist", server, name)
 			return Answer{Rcode: dnsmsg.RcodeNXDomain, Authority: soa}, nil
 		}
-		child, ns := referral(m, name, zone)
+		child, glue, err := r.follow(ctx, m, server, q, name, zone, depth)
+		if err != nil {
+			return Answer{}, err
+		}
 		if child == "" {
 			if m.Rcode == dnsmsg.RcodeSuccess && (m.Authoritative || len(soa) > 0) {
 				r.trace("%s says %s has no %s records", server, name, t)
@@ -223,22 +226,33 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			}
 			return Answer{}, fmt.Errorf("%s: %s gave neither an answer nor a referral", q, server)
 		}
-		glue := glueFor(m, ns, zone, r.IPv6)
-		r.trace("%s sent %s to %s (%d servers, %d with addresses)", server, q, child, len(ns), len(glue))
-		if len(glue) == 0 {
-			glue = r.addressesOf(ctx, ns, depth)
-		}
-		if len(glue) == 0 {
-			return Answer{}, fmt.Errorf("%s: no address found for any of %s's servers", q, child)
-		}
-		if r.Cache != nil {
-			if nsrr := matching(m.Authority, child, dnsmsg.TypeNS); len(nsrr) > 0 {
-				r.Cache.PutZone(child, glue, nsrr[0].TTL)
-			}
-		}
 		zone, servers = child, glue
 	}
 	return Answer{}, fmt.Errorf("%s: more than %d referrals", q, maxReferrals)
+}
+
+// follow handles a referral in m, the reply server gave to q while looking
+// up name in zone: it finds the child zone's servers' addresses and caches
+// them. A reply that isn't a referral gives "" and no error.
+func (r *Resolver) follow(ctx context.Context, m dnsmsg.Message, server netip.Addr, q dnsmsg.Question, name, zone string, depth int) (string, []netip.Addr, error) {
+	child, ns := referral(m, name, zone)
+	if child == "" {
+		return "", nil, nil
+	}
+	glue := glueFor(m, ns, zone, r.IPv6)
+	r.trace("%s sent %s to %s (%d servers, %d with addresses)", server, q, child, len(ns), len(glue))
+	if len(glue) == 0 {
+		glue = r.addressesOf(ctx, ns, depth)
+	}
+	if len(glue) == 0 {
+		return "", nil, fmt.Errorf("%s: no address found for any of %s's servers", q, child)
+	}
+	if r.Cache != nil {
+		if nsrr := matching(m.Authority, child, dnsmsg.TypeNS); len(nsrr) > 0 {
+			r.Cache.PutZone(child, glue, nsrr[0].TTL)
+		}
+	}
+	return child, glue, nil
 }
 
 // addressesOf looks up the nameservers' addresses, stopping at the first
