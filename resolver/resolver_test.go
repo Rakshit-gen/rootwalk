@@ -463,3 +463,23 @@ func TestTraceIndentsNestedLookups(t *testing.T) {
 		t.Fatalf("trace:\n%s", strings.Join(lines, "\n"))
 	}
 }
+
+func TestRefreshesAPopularNameBeforeItExpires(t *testing.T) {
+	_, r := world(t)
+	var clock *clock
+	r.Cache, clock = newTestCache()
+	if _, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA); err != nil {
+		t.Fatal(err)
+	}
+	clock.wait(280 * time.Second) // 20 of its 300 seconds left
+	ans, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA)
+	if err != nil || ans.Answers[0].TTL != 20 || ans.Queries != 0 {
+		t.Fatalf("got %v, %d queries, %v", ans.Answers, ans.Queries, err)
+	}
+	for start := time.Now(); time.Since(start) < 2*time.Second; time.Sleep(5 * time.Millisecond) {
+		if rrs, _, _ := r.Cache.Get("www.example.test", dnsmsg.TypeA); rrs[0].TTL == 300 {
+			return
+		}
+	}
+	t.Fatal("never refreshed")
+}

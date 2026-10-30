@@ -23,6 +23,8 @@ type entry struct {
 	rrs     []dnsmsg.RR
 	rcode   uint8 // RcodeNXDomain for a cached "no such name"
 	expires time.Time
+	ttl     time.Duration
+	claimed bool // someone is already refreshing it
 }
 
 // Cache holds answers until their TTL runs out, and at most Max of them:
@@ -76,7 +78,8 @@ func (c *Cache) put(name string, t dnsmsg.Type, e entry, ttl time.Duration) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e.key, e.expires = key(name, t), c.Now().Add(min(ttl, maxTTL))
+	e.key, e.ttl = key(name, t), min(ttl, maxTTL)
+	e.expires = c.Now().Add(e.ttl)
 	if old, ok := c.m[e.key]; ok {
 		c.lru.Remove(old)
 	}
@@ -111,6 +114,25 @@ func (c *Cache) Get(name string, t dnsmsg.Type) (rrs []dnsmsg.RR, rcode uint8, o
 		out[i] = r
 	}
 	return out, e.rcode, true
+}
+
+// ClaimRefresh reports whether the entry for name and type is in the last
+// tenth of its TTL and nobody has claimed it yet; the first caller to get
+// true should look it up again. Entries with TTLs under 10s are left to expire.
+func (c *Cache) ClaimRefresh(name string, t dnsmsg.Type) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.m[key(name, t)]
+	if !ok {
+		return false
+	}
+	e := el.Value.(*entry)
+	left := e.expires.Sub(c.Now())
+	if e.claimed || e.ttl < 10*time.Second || left <= 0 || left > e.ttl/10 {
+		return false
+	}
+	e.claimed = true
+	return true
 }
 
 // staleFor is how long an expired entry is kept for GetStale, and

@@ -171,6 +171,10 @@ func (r *Resolver) cached(ctx context.Context, name string, t dnsmsg.Type, depth
 		return r.lookup(ctx, name, t, depth)
 	}
 	if ans, ok := r.fromCache(ctx, r.Cache.Get, name, t); ok {
+		if r.Cache.ClaimRefresh(name, t) {
+			r.trace(ctx, "refreshing %s %s before it expires", name, t)
+			go r.prefetch(name, t)
+		}
 		return ans, nil
 	}
 	ans, err := r.lookup(ctx, name, t, depth)
@@ -182,14 +186,35 @@ func (r *Resolver) cached(ctx context.Context, name string, t dnsmsg.Type, depth
 		}
 		return ans, err
 	}
-	// Each record set is cached under its own name, so a chain is reusable from any point.
+	r.store(name, t, ans)
+	return ans, nil
+}
+
+// store caches a lookup's answer. Each record set goes under its own name,
+// so a CNAME chain is reusable from any point.
+func (r *Resolver) store(name string, t dnsmsg.Type, ans Answer) {
 	for _, rr := range ans.Answers {
 		r.Cache.Put(rr.Name, rr.Type, matching(ans.Answers, rr.Name, rr.Type))
 	}
 	if len(ans.Answers) == 0 && len(ans.Authority) > 0 {
 		r.Cache.PutNegative(name, t, ans.Rcode, ans.Authority[0])
 	}
-	return ans, nil
+}
+
+// prefetch looks a cached name up again in the background, so a name
+// asked for often never drops out of the cache.
+func (r *Resolver) prefetch(name string, t dnsmsg.Type) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	b := &budget{}
+	b.left.Store(maxQueries)
+	if ans, err := r.lookup(context.WithValue(ctx, budgetKey{}, b), name, t, 0); err == nil {
+		r.store(name, t, ans)
+	}
 }
 
 func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
