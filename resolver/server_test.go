@@ -115,3 +115,21 @@ func TestAClientFallsBackToTCPForTheWholeAnswer(t *testing.T) {
 		t.Fatalf("TC=%v, %d answers, %v", m.Truncated, len(m.Answers), err)
 	}
 }
+
+func TestRepliesSpeakEDNSOnlyToClientsThatDo(t *testing.T) {
+	_, r := world(t)
+	plain := dnsmsg.NewQuery(1, "www.example.test", dnsmsg.TypeA, 0)
+	plain.Additional = nil
+	if m := r.Reply(ctx, plain); len(m.Additional) != 0 {
+		t.Fatalf("OPT sent to a client without EDNS: %v", m.Additional)
+	}
+	if e, ok := r.Reply(ctx, dnsmsg.NewQuery(2, "www.example.test", dnsmsg.TypeA, 4096)).EDNS(); !ok || e.UDPSize != udpSize {
+		t.Fatalf("got %+v %v", e, ok)
+	}
+	v1 := dnsmsg.NewQuery(3, "www.example.test", dnsmsg.TypeA, 1232)
+	v1.Additional[0].TTL = 1 << 16
+	m := r.Reply(ctx, v1)
+	if len(m.Answers) != 0 || m.Additional[0].TTL>>24 != 1 {
+		t.Fatalf("EDNS version 1 got %+v, want BADVERS", m)
+	}
+}

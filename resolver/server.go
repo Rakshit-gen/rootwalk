@@ -18,7 +18,14 @@ func (r *Resolver) Reply(ctx context.Context, q dnsmsg.Message) dnsmsg.Message {
 			RecursionDesired: q.RecursionDesired, RecursionAvailable: true},
 		Questions: q.Questions,
 	}
+	e, edns := q.EDNS()
+	if edns {
+		m.Additional = []dnsmsg.RR{{Name: ".", Type: dnsmsg.TypeOPT, Class: udpSize}}
+	}
 	switch {
+	case edns && e.Version > 0:
+		// BADVERS, rcode 16: its upper bits go in the OPT record (RFC 6891).
+		m.Additional[0].TTL = 1 << 24
 	case q.Response:
 		m.Rcode = dnsmsg.RcodeFormErr
 	case q.Opcode != 0:
@@ -65,14 +72,13 @@ func (r *Resolver) ServeUDP(ctx context.Context, conn net.PacketConn) error {
 	}
 }
 
-// fitUDP packs a reply for UDP. It advertises EDNS0 back to clients that
-// used it, and if the reply won't fit the client's buffer it sends just
-// the header and question with TC set, so the client retries over TCP.
+// fitUDP packs a reply for UDP. If it won't fit the client's buffer, 512
+// bytes or what its EDNS0 record says, it sends just the header and
+// question with TC set, so the client retries over TCP.
 func fitUDP(m dnsmsg.Message, q dnsmsg.Message) ([]byte, error) {
 	limit := 512
 	if e, ok := q.EDNS(); ok {
 		limit = max(512, min(int(e.UDPSize), udpSize))
-		m.Additional = []dnsmsg.RR{{Name: ".", Type: dnsmsg.TypeOPT, Class: udpSize}}
 	}
 	b, err := m.Pack()
 	if err != nil || len(b) <= limit {
