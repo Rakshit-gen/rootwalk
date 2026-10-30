@@ -43,6 +43,8 @@ type Resolver struct {
 	// Timeout bounds a whole Resolve, every referral and nested lookup
 	// included. 10 seconds unless set.
 	Timeout time.Duration
+
+	rtt rtts
 }
 
 const (
@@ -215,7 +217,11 @@ func (r *Resolver) ask(ctx context.Context, servers []netip.Addr, q dnsmsg.Quest
 		if err := ctx.Err(); err != nil {
 			return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%s: %w", q, err)
 		}
+		start := time.Now()
 		m, err := r.Net.Exchange(ctx, s, q)
+		if ctx.Err() == nil { // our deadline running out says nothing about the server
+			r.rtt.observe(s, time.Since(start), err == nil)
+		}
 		if err == nil && m.Rcode != dnsmsg.RcodeSuccess && m.Rcode != dnsmsg.RcodeNXDomain {
 			err = fmt.Errorf("%s answered %s with rcode %d", s, q, m.Rcode)
 		}
