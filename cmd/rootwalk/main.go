@@ -45,7 +45,10 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 	}
 	fs := flag.NewFlagSet("rootwalk", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, usage) }
+	fs.Usage = func() {
+		fmt.Fprint(stderr, usage, "\nflags:\n")
+		fs.PrintDefaults()
+	}
 	trace := fs.Bool("trace", false, "print each server asked and what it said")
 	short := fs.Bool("short", false, "print only the data of the final records, like dig +short")
 	showVersion := fs.Bool("version", false, "print the version and exit")
