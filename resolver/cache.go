@@ -40,6 +40,13 @@ type Cache struct {
 
 const DefaultMax = 100_000
 
+func (c *Cache) limit() int {
+	if c.Max <= 0 {
+		return DefaultMax
+	}
+	return c.Max
+}
+
 type delegation struct {
 	servers []netip.Addr
 	expires time.Time
@@ -74,11 +81,7 @@ func (c *Cache) put(name string, t dnsmsg.Type, e entry, ttl time.Duration) {
 		c.lru.Remove(old)
 	}
 	c.m[e.key] = c.lru.PushFront(&e)
-	limit := c.Max
-	if limit <= 0 {
-		limit = DefaultMax
-	}
-	for c.lru.Len() > limit {
+	for c.lru.Len() > c.limit() {
 		delete(c.m, c.lru.Remove(c.lru.Back()).(*entry).key)
 	}
 }
@@ -135,7 +138,16 @@ func (c *Cache) PutZone(zone string, servers []netip.Addr, ttl uint32) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.zones[strings.ToLower(dnsmsg.Fqdn(zone))] = delegation{servers, c.Now().Add(min(time.Duration(ttl)*time.Second, maxTTL))}
+	now := c.Now()
+	if limit := max(1, c.limit()/10); len(c.zones) >= limit {
+		// Rare enough that a sweep beats keeping a second LRU list.
+		for z, d := range c.zones {
+			if !now.Before(d.expires) || len(c.zones) >= limit {
+				delete(c.zones, z)
+			}
+		}
+	}
+	c.zones[strings.ToLower(dnsmsg.Fqdn(zone))] = delegation{servers, now.Add(min(time.Duration(ttl)*time.Second, maxTTL))}
 }
 
 // Closest returns the deepest zone at or above name whose servers are

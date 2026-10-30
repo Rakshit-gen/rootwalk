@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"fmt"
 	"net/netip"
 	"testing"
 	"time"
@@ -101,5 +102,22 @@ func TestTheLeastRecentlyUsedGoesWhenFull(t *testing.T) {
 	c.Put("c.", dnsmsg.TypeA, a("c.")) // replacing doesn't count twice
 	if c.lru.Len() != 2 || len(c.m) != 2 {
 		t.Fatalf("%d in the list, %d in the map", c.lru.Len(), len(c.m))
+	}
+}
+
+func TestZonesAreCappedAtATenthOfMax(t *testing.T) {
+	c, clock := newTestCache()
+	c.Max = 50
+	servers := []netip.Addr{netip.MustParseAddr("192.0.2.1")}
+	c.PutZone("old.", servers, 10)
+	clock.wait(11 * time.Second)
+	for i := range 20 {
+		c.PutZone(fmt.Sprintf("z%d.", i), servers, 600)
+	}
+	if len(c.zones) > 5 {
+		t.Fatalf("%d zones kept, want at most 5", len(c.zones))
+	}
+	if z, _ := c.Closest("z19."); z != "z19." {
+		t.Fatal("the newest zone was dropped")
 	}
 }
