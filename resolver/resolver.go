@@ -200,8 +200,11 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 	}
 	q := dnsmsg.Question{Name: name, Type: t, Class: dnsmsg.ClassINET}
 	known, minimised, full := zone, 0, r.NoMinimise // known: the deepest name we know exists
+	sinceCut := 0                                   // minimised steps inside the current zone
 	for range maxReferrals + maxMinimise {
-		if next := below(name, known); !full && minimised < maxMinimise && !strings.EqualFold(next, name) {
+		// Two labels into a zone without a cut, the rest is probably the same
+		// server's too, and it will see the full name anyway.
+		if next := below(name, known); !full && minimised < maxMinimise && sinceCut < 2 && !strings.EqualFold(next, name) {
 			minimised++
 			mq := dnsmsg.Question{Name: next, Type: dnsmsg.TypeA, Class: dnsmsg.ClassINET}
 			m, server, err := r.ask(ctx, servers, mq)
@@ -217,10 +220,11 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 				return Answer{}, err
 			}
 			if child != "" {
-				zone, servers, known = child, glue, child
+				zone, servers, known, sinceCut = child, glue, child, 0
 			} else {
 				r.trace("%s has %s, going a label deeper", server, next)
 				known = next
+				sinceCut++
 			}
 			continue
 		}
@@ -256,7 +260,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			}
 			return Answer{}, fmt.Errorf("%s: %s gave neither an answer nor a referral", q, server)
 		}
-		zone, servers, known = child, glue, child
+		zone, servers, known, sinceCut = child, glue, child, 0
 	}
 	return Answer{}, fmt.Errorf("%s: more than %d referrals", q, maxReferrals)
 }

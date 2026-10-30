@@ -408,3 +408,18 @@ func TestServersSeeOnlyOneLabelMoreThanTheirZone(t *testing.T) {
 		t.Fatalf("with NoMinimise the root saw %q", seen[0])
 	}
 }
+
+func TestStopsMinimisingTwoLabelsIntoAZone(t *testing.T) {
+	n, r := world(t)
+	n.add("10.0.2.1", zone(t, "example.test.",
+		"example.test. 300 SOA ns1.example.test. h.example.test. 60",
+		"a.b.c.d.example.test. 300 A 192.0.2.7",
+		"d.example.test. 300 TXT x", "c.d.example.test. 300 TXT x", "b.c.d.example.test. 300 TXT x"))
+	if _, err := r.Resolve(ctx, "a.b.c.d.example.test", dnsmsg.TypeA); err != nil {
+		t.Fatal(err)
+	}
+	// test., example.test., then d and c.d, then the full name.
+	if n.queries != 5 {
+		t.Fatalf("%d queries, want 5", n.queries)
+	}
+}
