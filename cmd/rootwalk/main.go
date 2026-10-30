@@ -20,8 +20,9 @@ import (
 )
 
 const usage = `usage:
-  rootwalk [-trace] [-6] [-timeout 10s] name [type]   look a name up (type A unless given)
-  rootwalk serve [-trace] [-6] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...] [-rate 100] [-log]
+  rootwalk [-trace] [-6] [-no-minimise] [-timeout 10s] name [type]
+                                                    look a name up (type A unless given)
+  rootwalk serve [-trace] [-6] [-no-minimise] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...] [-rate 100] [-log]
                                                     answer other programs' queries, with a cache
 `
 
@@ -40,6 +41,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	trace := fs.Bool("trace", false, "print each server asked and what it said")
 	timeout := fs.Duration("timeout", 10*time.Second, "give up on a lookup after this long")
 	v6 := fs.Bool("6", false, "reach nameservers over IPv6 too")
+	full := fs.Bool("no-minimise", false, "send every server the full name (RFC 9156 minimisation is on by default)")
 	allow := fs.String("allow", "", "for serve: comma-separated prefixes that may ask (default loopback and private)")
 	logQueries := fs.Bool("log", false, "for serve: print a line per query")
 	rate := fs.Float64("rate", 100, "for serve: UDP queries a second per client, 0 for no limit")
@@ -52,7 +54,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fs.Usage()
 			return 2
 		}
-		r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6}
+		r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6, NoMinimise: *full}
 		if *trace {
 			r.Trace = func(s string) { fmt.Fprintln(stderr, s) }
 		}
@@ -83,7 +85,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	// A cache even for one lookup, so a CNAME into a zone already walked starts there.
-	r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6}
+	r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6, NoMinimise: *full}
 	if *trace {
 		r.Trace = func(s string) { fmt.Fprintln(stderr, ";", s) }
 	}
