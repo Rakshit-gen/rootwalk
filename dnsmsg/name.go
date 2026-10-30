@@ -115,21 +115,22 @@ func appendName(b []byte, name string) ([]byte, error) {
 type compression map[string]int
 
 func (c compression) appendName(b []byte, name string) ([]byte, error) {
-	wire, err := appendName(nil, name)
+	start := len(b)
+	b, err := appendName(b, name)
 	if err != nil || c == nil {
-		return append(b, wire...), err
+		return b, err
 	}
-	for i := 0; wire[i] != 0; i += int(wire[i]) + 1 {
-		suffix := string(wire[i:]) // exact bytes, so a pointer never changes a name's case
-		if at, ok := c[suffix]; ok {
-			b = append(b, wire[:i]...)
-			return binary.BigEndian.AppendUint16(b, 0xc000|uint16(at)), nil
+	for i := start; b[i] != 0; i += int(b[i]) + 1 {
+		// Exact bytes, so a pointer never changes a name's case. The lookup
+		// doesn't copy the suffix; only storing a new one does.
+		if at, ok := c[string(b[i:])]; ok {
+			return binary.BigEndian.AppendUint16(b[:i], 0xc000|uint16(at)), nil
 		}
-		if len(b)+i < 0x4000 {
-			c[suffix] = len(b) + i
+		if i < 0x4000 {
+			c[string(b[i:])] = i
 		}
 	}
-	return append(b, wire...), nil
+	return b, nil
 }
 
 // Fqdn adds the trailing dot if it is missing.
