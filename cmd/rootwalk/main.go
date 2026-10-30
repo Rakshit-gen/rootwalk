@@ -20,7 +20,7 @@ import (
 )
 
 const usage = `usage:
-  rootwalk [-trace] [-6] [-no-minimise] [-timeout 10s] name [type]
+  rootwalk [-trace] [-short] [-6] [-no-minimise] [-timeout 10s] name [type]
                                                     look a name up (type A unless given)
   rootwalk serve [-trace] [-6] [-no-minimise] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...] [-rate 100] [-log]
                                                     answer other programs' queries, with a cache
@@ -40,6 +40,7 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 	trace := fs.Bool("trace", false, "print each server asked and what it said")
+	short := fs.Bool("short", false, "print only the data of the final records, like dig +short")
 	timeout := fs.Duration("timeout", 10*time.Second, "give up on a lookup after this long")
 	v6 := fs.Bool("6", false, "reach nameservers over IPv6 too")
 	full := fs.Bool("no-minimise", false, "send every server the full name (RFC 9156 minimisation is on by default)")
@@ -86,7 +87,7 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 			return 2
 		}
 	}
-	return query(r, fs.Arg(0), t, stdout, stderr)
+	return query(r, fs.Arg(0), t, *short, stdout, stderr)
 }
 
 func serve(s *resolver.Server, addr string, stderr io.Writer) int {
@@ -115,12 +116,20 @@ func serve(s *resolver.Server, addr string, stderr io.Writer) int {
 	return 0
 }
 
-func query(r *resolver.Resolver, name string, t dnsmsg.Type, stdout, stderr io.Writer) int {
+func query(r *resolver.Resolver, name string, t dnsmsg.Type, short bool, stdout, stderr io.Writer) int {
 	start := time.Now()
 	ans, err := r.Resolve(context.Background(), name, t)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if short {
+		for _, rr := range ans.Answers {
+			if rr.Type == t {
+				fmt.Fprintln(stdout, strings.SplitN(rr.String(), "\t", 4)[3])
+			}
+		}
+		return 0
 	}
 	for _, rr := range ans.Answers {
 		fmt.Fprintln(stdout, rr)

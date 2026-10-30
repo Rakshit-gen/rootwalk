@@ -44,6 +44,8 @@ func TestLookups(t *testing.T) {
 		{[]string{"www.example.test"}, 0, "www.example.test.\t60\tA\t192.0.2.1\n"},
 		{[]string{"www.example.test", "aaaa"}, 0, "; www.example.test. has no AAAA records\n"},
 		{[]string{"nope.example.test"}, 0, "; nope.example.test. doesn't exist\n"},
+		{[]string{"-short", "www.example.test"}, 0, "192.0.2.1\n"},
+		{[]string{"-short", "nope.example.test"}, 0, ""},
 	} {
 		code, out, errs := rootwalk(c.args...)
 		if code != c.code || out != c.out {
