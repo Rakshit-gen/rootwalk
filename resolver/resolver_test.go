@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -368,5 +369,42 @@ func TestBelow(t *testing.T) {
 		if got := below(c.name, c.zone); got != c.want {
 			t.Errorf("below(%q, %q) = %q, want %q", c.name, c.zone, got, c.want)
 		}
+	}
+}
+
+func TestServersSeeOnlyOneLabelMoreThanTheirZone(t *testing.T) {
+	n, r := world(t)
+	var seen []string
+	for addr, serve := range n.servers {
+		n.servers[addr] = func(q dnsmsg.Question) dnsmsg.Message {
+			seen = append(seen, addr.String()+" "+q.String())
+			return serve(q)
+		}
+	}
+	n.add("10.0.2.1", zone(t, "example.test.",
+		"example.test. 300 SOA ns1.example.test. h.example.test. 60",
+		"deep.a.b.example.test. 300 A 192.0.2.7",
+		"b.example.test. 300 TXT x")) // b exists; a.b is empty but has a name below it
+	serve := n.servers[addrs("10.0.2.1")[0]]
+	n.servers[addrs("10.0.2.1")[0]] = func(q dnsmsg.Question) dnsmsg.Message {
+		seen = append(seen, "10.0.2.1 "+q.String())
+		return serve(q)
+	}
+	ans, err := r.Resolve(ctx, "deep.a.b.example.test", dnsmsg.TypeA)
+	if err != nil || len(ans.Answers) != 1 {
+		t.Fatalf("%v %v", ans, err)
+	}
+	want := []string{
+		"10.0.0.1 test. A", "10.0.1.1 example.test. A", "10.0.2.1 b.example.test. A",
+		"10.0.2.1 a.b.example.test. A",      // the fake wrongly says NXDOMAIN, so...
+		"10.0.2.1 deep.a.b.example.test. A", // ...the full name is asked
+	}
+	if !slices.Equal(seen, want) {
+		t.Fatalf("servers saw\n%s\nwant\n%s", strings.Join(seen, "\n"), strings.Join(want, "\n"))
+	}
+	seen, r.NoMinimise = nil, true
+	r.Resolve(ctx, "www.example.test", dnsmsg.TypeA)
+	if seen[0] != "10.0.0.1 www.example.test. A" {
+		t.Fatalf("with NoMinimise the root saw %q", seen[0])
 	}
 }

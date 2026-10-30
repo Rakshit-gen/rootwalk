@@ -56,6 +56,11 @@ type Resolver struct {
 	// costs a timeout.
 	IPv6 bool
 
+	// NoMinimise sends every server the full name. By default each server
+	// is only told one label more than the zone it serves (RFC 9156), so
+	// the root sees "com." and not "www.example.com.".
+	NoMinimise bool
+
 	rtt     rtts
 	flights flights
 }
@@ -66,6 +71,7 @@ const (
 	maxCNAMEs    = 8
 	maxGlueless  = 4  // nameservers looked up per referral that came without glue
 	maxQueries   = 64 // sent for one Resolve, nested lookups and retries included
+	maxMinimise  = 10 // minimised queries per lookup before asking for the full name (RFC 9156)
 )
 
 var (
@@ -193,7 +199,31 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 		}
 	}
 	q := dnsmsg.Question{Name: name, Type: t, Class: dnsmsg.ClassINET}
-	for range maxReferrals {
+	known, minimised, full := zone, 0, r.NoMinimise // known: the deepest name we know exists
+	for range maxReferrals + maxMinimise {
+		if next := below(name, known); !full && minimised < maxMinimise && !strings.EqualFold(next, name) {
+			minimised++
+			mq := dnsmsg.Question{Name: next, Type: dnsmsg.TypeA, Class: dnsmsg.ClassINET}
+			m, server, err := r.ask(ctx, servers, mq)
+			if err != nil || m.Rcode == dnsmsg.RcodeNXDomain {
+				// Some servers wrongly say a name with nothing but names below it
+				// doesn't exist, so ask the full question before believing that.
+				r.trace("asking for the full name after %s: rcode %d, %v", mq, m.Rcode, err)
+				full = true
+				continue
+			}
+			child, glue, err := r.follow(ctx, m, server, mq, name, zone, depth)
+			if err != nil {
+				return Answer{}, err
+			}
+			if child != "" {
+				zone, servers, known = child, glue, child
+			} else {
+				r.trace("%s has %s, going a label deeper", server, next)
+				known = next
+			}
+			continue
+		}
 		m, server, err := r.ask(ctx, servers, q)
 		if err != nil {
 			return Answer{}, err
@@ -226,7 +256,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			}
 			return Answer{}, fmt.Errorf("%s: %s gave neither an answer nor a referral", q, server)
 		}
-		zone, servers = child, glue
+		zone, servers, known = child, glue, child
 	}
 	return Answer{}, fmt.Errorf("%s: more than %d referrals", q, maxReferrals)
 }
