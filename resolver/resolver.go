@@ -205,7 +205,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			}
 			return Answer{}, fmt.Errorf("%s: %s gave neither an answer nor a referral", q, server)
 		}
-		glue := glueFor(m, ns, zone)
+		glue := glueFor(m, ns, zone, r.IPv6)
 		r.trace("%s sent %s to %s (%d servers, %d with addresses)", server, q, child, len(ns), len(glue))
 		if len(glue) == 0 {
 			glue = r.addressesOf(ctx, ns, depth)
@@ -336,15 +336,15 @@ func referral(m dnsmsg.Message, name, from string) (string, []string) {
 
 // glueFor returns the addresses the additional section gives for the
 // nameservers, believing only addresses for names inside the zone the
-// server was asked as.
-func glueFor(m dnsmsg.Message, ns []string, from string) []netip.Addr {
+// server was asked as. IPv6 addresses are kept only if v6 is set.
+func glueFor(m dnsmsg.Message, ns []string, from string, v6 bool) []netip.Addr {
 	var out []netip.Addr
 	for _, rr := range m.Additional {
 		if rr.Type != dnsmsg.TypeA && rr.Type != dnsmsg.TypeAAAA || !inZone(rr.Name, from) {
 			continue
 		}
 		for _, n := range ns {
-			if strings.EqualFold(rr.Name, n) && rr.Addr.Is4() { // IPv4 only: no IPv6 route is assumed
+			if strings.EqualFold(rr.Name, n) && (rr.Addr.Is4() || v6) {
 				out = append(out, rr.Addr)
 			}
 		}

@@ -260,3 +260,18 @@ func TestOneLookupSendsAtMostMaxQueries(t *testing.T) {
 		t.Fatalf("%d queries, %v", n.queries, err)
 	}
 }
+
+func TestUsesIPv6GlueOnlyWhenAllowed(t *testing.T) {
+	n, r := world(t)
+	n.add("10.0.1.1", zone(t, "test.",
+		"example.test. 3600 NS ns1.example.test.",
+		"ns1.example.test. 3600 AAAA 2001:db8::53")) // reachable over IPv6 only
+	n.add("2001:db8::53", zone(t, "example.test.", "www.example.test. 300 A 192.0.2.80"))
+	if _, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA); err == nil {
+		t.Fatal("used IPv6 glue with IPv6 off")
+	}
+	r.IPv6 = true
+	if ans, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA); err != nil || len(ans.Answers) != 1 {
+		t.Fatalf("with IPv6 on: %v %v", ans, err)
+	}
+}
