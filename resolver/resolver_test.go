@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -327,5 +328,30 @@ func TestServesStaleWhenTheServersStopAnswering(t *testing.T) {
 	}
 	if _, err := r.Resolve(ctx, "never.example.test", dnsmsg.TypeA); err == nil {
 		t.Fatal("answered a name that was never cached")
+	}
+}
+
+func TestConcurrentLookupsForOneNameShareTheWork(t *testing.T) {
+	n, r := world(t)
+	n.delay = 20 * time.Millisecond
+	var wg sync.WaitGroup
+	errs := make(chan error, 10)
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := r.Resolve(ctx, "WWW.example.test", dnsmsg.TypeA)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n.queries != 3 {
+		t.Fatalf("10 lookups sent %d queries, want 3", n.queries)
 	}
 }

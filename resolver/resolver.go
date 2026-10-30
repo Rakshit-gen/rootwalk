@@ -56,7 +56,8 @@ type Resolver struct {
 	// costs a timeout.
 	IPv6 bool
 
-	rtt rtts
+	rtt     rtts
+	flights flights
 }
 
 const (
@@ -90,7 +91,8 @@ func (r *Resolver) trace(format string, args ...any) {
 }
 
 // Resolve finds the records of type t for name, following CNAMEs. The
-// answer holds the whole chain, CNAMEs first.
+// answer holds the whole chain, CNAMEs first. Calls for the same name and
+// type at the same time share one lookup.
 func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Answer, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -98,9 +100,11 @@ func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Ans
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	b := &budget{}
-	b.left.Store(maxQueries)
-	return r.resolve(context.WithValue(ctx, budgetKey{}, b), dnsmsg.Fqdn(name), t, 0)
+	return r.flights.do(ctx, key(name, t), func() (Answer, error) {
+		b := &budget{}
+		b.left.Store(maxQueries)
+		return r.resolve(context.WithValue(ctx, budgetKey{}, b), dnsmsg.Fqdn(name), t, 0)
+	})
 }
 
 func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
