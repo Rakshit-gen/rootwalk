@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,11 @@ import (
 var RootServers = addrs("198.41.0.4", "170.247.170.2", "192.33.4.12", "199.7.91.13", "192.203.230.10",
 	"192.5.5.241", "192.112.36.4", "198.97.190.53", "192.36.148.17", "192.58.128.30", "193.0.14.129",
 	"199.7.83.42", "202.12.27.33")
+
+// RootServersV6 are their IPv6 addresses, used when Resolver.IPv6 is set.
+var RootServersV6 = addrs("2001:503:ba3e::2:30", "2801:1b8:10::b", "2001:500:2::c", "2001:500:2d::d",
+	"2001:500:a8::e", "2001:500:2f::f", "2001:500:12::d0d", "2001:500:1::53", "2001:7fe::53",
+	"2001:503:c27::2:30", "2001:7fd::1", "2001:500:9f::42", "2001:dc3::35")
 
 func addrs(ss ...string) []netip.Addr {
 	out := make([]netip.Addr, len(ss))
@@ -37,13 +43,18 @@ type Answer struct {
 // Resolver walks from the root servers down to an authoritative answer.
 type Resolver struct {
 	Net   Exchanger
-	Roots []netip.Addr // RootServers unless set
+	Roots []netip.Addr // RootServers (and RootServersV6 with IPv6) unless set
 	Trace func(string) // called with each step, if set
 	Cache *Cache       // nil means no caching
 
 	// Timeout bounds a whole Resolve, every referral and nested lookup
 	// included. 10 seconds unless set.
 	Timeout time.Duration
+
+	// IPv6 lets nameservers be reached over IPv6 as well as IPv4. Leave it
+	// off on a network without an IPv6 route, or every IPv6 server tried
+	// costs a timeout.
+	IPv6 bool
 
 	rtt rtts
 }
@@ -152,6 +163,9 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 	servers := r.Roots
 	if servers == nil {
 		servers = RootServers
+		if r.IPv6 {
+			servers = append(slices.Clone(RootServers), RootServersV6...)
+		}
 	}
 	zone := "."
 	if r.Cache != nil {
