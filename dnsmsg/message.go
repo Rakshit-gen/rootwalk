@@ -76,3 +76,20 @@ func NewQuery(id uint16, name string, t Type, udpSize uint16) Message {
 		Additional: []RR{{Name: ".", Type: TypeOPT, Class: udpSize}},
 	}
 }
+
+// EDNS is what a message's OPT record says (RFC 6891).
+type EDNS struct {
+	UDPSize uint16
+	Version uint8
+	DO      bool // the sender wants DNSSEC records
+}
+
+// EDNS returns the message's OPT record, if it has one.
+func (m Message) EDNS() (EDNS, bool) {
+	for _, r := range m.Additional {
+		if r.Type == TypeOPT {
+			return EDNS{UDPSize: r.Class, Version: uint8(r.TTL >> 16), DO: r.TTL&0x8000 != 0}, true
+		}
+	}
+	return EDNS{}, false
+}

@@ -64,3 +64,14 @@ func TestPackCompressesRepeatedNames(t *testing.T) {
 		t.Fatalf("round trip: %v\n%+v", err, got)
 	}
 }
+
+func TestEDNS(t *testing.T) {
+	if _, ok := (Message{}).EDNS(); ok {
+		t.Fatal("found EDNS in an empty message")
+	}
+	m := NewQuery(1, "example.com", TypeA, 1232)
+	m.Additional[0].TTL = 1<<16 | 0x8000
+	if e, ok := m.EDNS(); !ok || e != (EDNS{UDPSize: 1232, Version: 1, DO: true}) {
+		t.Fatalf("got %+v %v", e, ok)
+	}
+}

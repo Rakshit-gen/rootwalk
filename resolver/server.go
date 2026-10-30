@@ -70,11 +70,9 @@ func (r *Resolver) ServeUDP(ctx context.Context, conn net.PacketConn) error {
 // the header and question with TC set, so the client retries over TCP.
 func fitUDP(m dnsmsg.Message, q dnsmsg.Message) ([]byte, error) {
 	limit := 512
-	for _, rr := range q.Additional {
-		if rr.Type == dnsmsg.TypeOPT {
-			limit = max(512, min(int(rr.Class), udpSize))
-			m.Additional = []dnsmsg.RR{{Name: ".", Type: dnsmsg.TypeOPT, Class: udpSize}}
-		}
+	if e, ok := q.EDNS(); ok {
+		limit = max(512, min(int(e.UDPSize), udpSize))
+		m.Additional = []dnsmsg.RR{{Name: ".", Type: dnsmsg.TypeOPT, Class: udpSize}}
 	}
 	b, err := m.Pack()
 	if err != nil || len(b) <= limit {
