@@ -51,6 +51,7 @@ const (
 	maxReferrals = 16
 	maxDepth     = 8 // nested lookups for nameserver addresses
 	maxCNAMEs    = 8
+	maxGlueless  = 4 // nameservers looked up per referral that came without glue
 )
 
 var ErrNoAnswer = errors.New("no server gave a usable answer")
@@ -191,9 +192,11 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 }
 
 // addressesOf looks up the nameservers' addresses, stopping at the first
-// that resolves: one working server is enough to carry on.
+// that resolves: one working server is enough to carry on. Only the first
+// few are tried, so a referral to hundreds of names that don't resolve
+// can't turn one query into hundreds (the NXNSAttack).
 func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []netip.Addr {
-	for _, n := range ns {
+	for _, n := range ns[:min(len(ns), maxGlueless)] {
 		r.trace("looking up %s's address", n)
 		ans, err := r.resolve(ctx, n, dnsmsg.TypeA, depth+1)
 		if err != nil {

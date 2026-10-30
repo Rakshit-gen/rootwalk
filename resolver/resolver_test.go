@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -228,5 +229,21 @@ func TestIgnoresRecordsForCNAMETargetsOutsideTheServersZone(t *testing.T) {
 	}
 	if rrs, _, _ := r.Cache.Get("bank.other.test", dnsmsg.TypeA); len(rrs) != 1 || rrs[0].Addr.String() != "192.0.2.10" {
 		t.Fatalf("cache has %v", rrs)
+	}
+}
+
+func TestAReferralToManyMissingNameserversCostsLittle(t *testing.T) {
+	n, r := world(t)
+	lines := []string{"example.test. 3600 NS ns1.example.test.", "ns1.example.test. 3600 A 10.0.2.1"}
+	for i := range 200 {
+		lines = append(lines, fmt.Sprintf("victim.test. 3600 NS ns%d.example.test.", i)) // none of them exist
+	}
+	n.add("10.0.1.1", zone(t, "test.", lines...))
+	r.Cache, _ = newTestCache()
+	if _, err := r.Resolve(ctx, "www.victim.test", dnsmsg.TypeA); err == nil {
+		t.Fatal("resolved through nameservers that don't exist")
+	}
+	if n.queries > 20 {
+		t.Fatalf("one lookup sent %d queries", n.queries)
 	}
 }
