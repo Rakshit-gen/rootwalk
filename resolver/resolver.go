@@ -274,7 +274,7 @@ func (r *Resolver) follow(ctx context.Context, m dnsmsg.Message, server netip.Ad
 		return "", nil, nil
 	}
 	glue := glueFor(m, ns, zone, r.IPv6)
-	r.trace("%s sent %s to %s (%d servers, %d with addresses)", server, q, child, len(ns), len(glue))
+	r.trace("%s sent %s to %s (%d servers, %d addresses in glue)", server, q, child, len(ns), len(glue))
 	if len(glue) == 0 {
 		glue = r.addressesOf(ctx, ns, depth)
 	}
