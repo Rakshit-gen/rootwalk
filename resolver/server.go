@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/netip"
 	"sync"
@@ -71,6 +72,10 @@ type Server struct {
 	// query past it gets SERVFAIL straight away rather than piling up.
 	MaxInFlight int
 
+	// Log, if set, is called once per query with the client, question,
+	// rcode, answer count and time taken.
+	Log func(string)
+
 	once     sync.Once
 	limit    *limiter
 	inFlight chan struct{}
@@ -127,7 +132,13 @@ func (s *Server) answer(ctx context.Context, from net.Addr, q dnsmsg.Message) dn
 		m.Rcode = dnsmsg.RcodeServFail
 		return m
 	}
-	return s.Resolver.Reply(ctx, q)
+	start := time.Now()
+	m := s.Resolver.Reply(ctx, q)
+	if s.Log != nil && len(q.Questions) > 0 {
+		s.Log(fmt.Sprintf("%s %s rcode=%d answers=%d %v", from, q.Questions[0], m.Rcode, len(m.Answers),
+			time.Since(start).Round(time.Millisecond)))
+	}
+	return m
 }
 
 // ServeUDP answers queries arriving on conn until ctx is done, each in its

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -218,5 +219,18 @@ func TestQueriesPastMaxInFlightFailFast(t *testing.T) {
 	}
 	if m := s.answer(ctx, local, dnsmsg.NewQuery(3, "example.test", dnsmsg.TypeA, 0)); m.Rcode != dnsmsg.RcodeSuccess {
 		t.Fatalf("slot not given back: rcode %d", m.Rcode)
+	}
+}
+
+func TestLogsEachQuery(t *testing.T) {
+	_, r := world(t)
+	var lines []string
+	s := &Server{Resolver: r, Log: func(l string) { lines = append(lines, l) }}
+	local := net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:5000"))
+	s.answer(ctx, local, dnsmsg.NewQuery(1, "www.example.test", dnsmsg.TypeA, 0))
+	s.answer(ctx, local, dnsmsg.NewQuery(2, "nope.example.test", dnsmsg.TypeA, 0))
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "127.0.0.1:5000 www.example.test. A rcode=0 answers=1 ") ||
+		!strings.Contains(lines[1], "rcode=3 answers=0") {
+		t.Fatalf("%q", lines)
 	}
 }
