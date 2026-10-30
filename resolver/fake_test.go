@@ -13,7 +13,7 @@ import (
 )
 
 // rr parses one line of zone data: "name ttl TYPE data...".
-func rr(t *testing.T, line string) dnsmsg.RR {
+func rr(t testing.TB, line string) dnsmsg.RR {
 	t.Helper()
 	f := strings.Fields(line)
 	ttl, _ := strconv.Atoi(f[1])
@@ -41,7 +41,7 @@ type authority struct {
 	rrs  []dnsmsg.RR
 }
 
-func zone(t *testing.T, name string, lines ...string) *authority {
+func zone(t testing.TB, name string, lines ...string) *authority {
 	z := &authority{zone: name}
 	for _, l := range lines {
 		z.rrs = append(z.rrs, rr(t, l))
@@ -133,7 +133,7 @@ func (n *network) add(addr string, z *authority) {
 }
 
 // A root, a .test TLD and an example.test zone, each on its own server.
-func world(t *testing.T) (*network, *Resolver) {
+func world(t testing.TB) (*network, *Resolver) {
 	n := &network{}
 	n.add("10.0.0.1", zone(t, ".",
 		". 86400 SOA a.root. nstld. 86400",
