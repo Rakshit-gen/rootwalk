@@ -18,8 +18,8 @@ import (
 )
 
 const usage = `usage:
-  rootwalk [-trace] [-timeout 10s] name [type]   look a name up (type A unless given)
-  rootwalk serve [-trace] [-addr 127.0.0.1:5353]  answer other programs' queries, with a cache
+  rootwalk [-trace] [-6] [-timeout 10s] name [type]   look a name up (type A unless given)
+  rootwalk serve [-trace] [-6] [-addr 127.0.0.1:5353] answer other programs' queries, with a cache
 `
 
 func main() {
@@ -36,6 +36,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 	trace := fs.Bool("trace", false, "print each server asked and what it said")
 	timeout := fs.Duration("timeout", 10*time.Second, "give up on a lookup after this long")
+	v6 := fs.Bool("6", false, "reach nameservers over IPv6 too")
 	addr := fs.String("addr", "127.0.0.1:5353", "where serve listens, UDP and TCP")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -45,7 +46,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fs.Usage()
 			return 2
 		}
-		r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache()}
+		r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6}
 		if *trace {
 			r.Trace = func(s string) { fmt.Fprintln(stderr, s) }
 		}
@@ -64,7 +65,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	// A cache even for one lookup, so a CNAME into a zone already walked starts there.
-	r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache()}
+	r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6}
 	if *trace {
 		r.Trace = func(s string) { fmt.Fprintln(stderr, ";", s) }
 	}
