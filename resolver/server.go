@@ -34,7 +34,7 @@ func (r *Resolver) Reply(ctx context.Context, q dnsmsg.Message) dnsmsg.Message {
 	default:
 		ans, err := r.Resolve(ctx, q.Questions[0].Name, q.Questions[0].Type)
 		if err != nil {
-			r.trace("%s: %v", q.Questions[0], err)
+			r.trace(ctx, "%s: %v", q.Questions[0], err)
 			m.Rcode = dnsmsg.RcodeServFail
 			break
 		}

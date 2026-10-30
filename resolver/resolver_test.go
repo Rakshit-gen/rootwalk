@@ -423,3 +423,26 @@ func TestStopsMinimisingTwoLabelsIntoAZone(t *testing.T) {
 		t.Fatalf("%d queries, want 5", n.queries)
 	}
 }
+
+func TestTraceIndentsNestedLookups(t *testing.T) {
+	n, r := world(t)
+	n.add("10.0.1.1", zone(t, "test.",
+		"example.test. 3600 NS ns1.example.test.", "ns1.example.test. 3600 A 10.0.2.1",
+		"other.test. 3600 NS dns.example.test."))
+	n.add("10.0.2.1", zone(t, "example.test.", "dns.example.test. 300 A 10.0.3.1"))
+	n.add("10.0.3.1", zone(t, "other.test.", "www.other.test. 300 A 192.0.2.33"))
+	var lines []string
+	r.Trace = func(l string) { lines = append(lines, l) }
+	if _, err := r.Resolve(ctx, "www.other.test", dnsmsg.TypeA); err != nil {
+		t.Fatal(err)
+	}
+	nested := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "  ") && strings.Contains(l, "dns.example.test") {
+			nested++
+		}
+	}
+	if nested == 0 || strings.HasPrefix(lines[0], " ") {
+		t.Fatalf("trace:\n%s", strings.Join(lines, "\n"))
+	}
+}

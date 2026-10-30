@@ -90,9 +90,14 @@ func spend(ctx context.Context) bool {
 	return !ok || b.left.Add(-1) >= 0
 }
 
-func (r *Resolver) trace(format string, args ...any) {
+type depthKey struct{}
+
+// trace reports a step, indented by how deeply nested the lookup making it
+// is, so a nameserver's address lookup reads as part of the one that needed it.
+func (r *Resolver) trace(ctx context.Context, format string, args ...any) {
 	if r.Trace != nil {
-		r.Trace(fmt.Sprintf(format, args...))
+		depth, _ := ctx.Value(depthKey{}).(int)
+		r.Trace(strings.Repeat("  ", depth) + fmt.Sprintf(format, args...))
 	}
 }
 
@@ -114,6 +119,7 @@ func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Ans
 }
 
 func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
+	ctx = context.WithValue(ctx, depthKey{}, depth)
 	var chain []dnsmsg.RR
 	seen := map[string]bool{}
 	for range maxCNAMEs + 1 {
@@ -130,7 +136,7 @@ func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, dept
 			ans.Answers = chain
 			return ans, nil
 		}
-		r.trace("following CNAME to %s", ans.next)
+		r.trace(ctx, "following CNAME to %s", ans.next)
 		name = ans.next
 	}
 	return Answer{}, fmt.Errorf("%s: more than %d CNAMEs", name, maxCNAMEs)
@@ -138,16 +144,16 @@ func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, dept
 
 // fromCache turns what get finds for name into an Answer: the records,
 // a negative answer, or a CNAME still to follow.
-func (r *Resolver) fromCache(get func(string, dnsmsg.Type) ([]dnsmsg.RR, uint8, bool), name string, t dnsmsg.Type) (Answer, bool) {
+func (r *Resolver) fromCache(ctx context.Context, get func(string, dnsmsg.Type) ([]dnsmsg.RR, uint8, bool), name string, t dnsmsg.Type) (Answer, bool) {
 	if rrs, rcode, ok := get(name, t); ok {
-		r.trace("cache has %s %s", name, t)
+		r.trace(ctx, "cache has %s %s", name, t)
 		if rrs[0].Type != t { // a negative entry holds only the SOA
 			return Answer{Rcode: rcode, Authority: rrs}, true
 		}
 		return Answer{Answers: rrs}, true
 	}
 	if rrs, _, ok := get(name, dnsmsg.TypeCNAME); ok && t != dnsmsg.TypeCNAME {
-		r.trace("cache has %s CNAME", name)
+		r.trace(ctx, "cache has %s CNAME", name)
 		return Answer{Answers: rrs, next: rrs[0].Target}, true
 	}
 	return Answer{}, false
@@ -158,14 +164,14 @@ func (r *Resolver) cached(ctx context.Context, name string, t dnsmsg.Type, depth
 	if r.Cache == nil {
 		return r.lookup(ctx, name, t, depth)
 	}
-	if ans, ok := r.fromCache(r.Cache.Get, name, t); ok {
+	if ans, ok := r.fromCache(ctx, r.Cache.Get, name, t); ok {
 		return ans, nil
 	}
 	ans, err := r.lookup(ctx, name, t, depth)
 	if err != nil {
 		// RFC 8767: an old answer beats none when the servers have gone quiet.
-		if stale, ok := r.fromCache(r.Cache.GetStale, name, t); ok {
-			r.trace("serving %s %s stale: %v", name, t, err)
+		if stale, ok := r.fromCache(ctx, r.Cache.GetStale, name, t); ok {
+			r.trace(ctx, "serving %s %s stale: %v", name, t, err)
 			return stale, nil
 		}
 		return ans, err
@@ -194,7 +200,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 	zone := "."
 	if r.Cache != nil {
 		if z, cached := r.Cache.Closest(name); z != "" {
-			r.trace("starting at %s from the cache", z)
+			r.trace(ctx, "starting at %s from the cache", z)
 			zone, servers = z, cached
 		}
 	}
@@ -211,7 +217,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			if err != nil || m.Rcode == dnsmsg.RcodeNXDomain {
 				// Some servers wrongly say a name with nothing but names below it
 				// doesn't exist, so ask the full question before believing that.
-				r.trace("asking for the full name after %s: rcode %d, %v", mq, m.Rcode, err)
+				r.trace(ctx, "asking for the full name after %s: rcode %d, %v", mq, m.Rcode, err)
 				full = true
 				continue
 			}
@@ -222,7 +228,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			if child != "" {
 				zone, servers, known, sinceCut = child, glue, child, 0
 			} else {
-				r.trace("%s has %s, going a label deeper", server, next)
+				r.trace(ctx, "%s has %s, going a label deeper", server, next)
 				known = next
 				sinceCut++
 			}
@@ -233,11 +239,11 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 			return Answer{}, err
 		}
 		if answers := matching(m.Answers, name, t); len(answers) > 0 {
-			r.trace("%s answered %s from %s", server, q, zone)
+			r.trace(ctx, "%s answered %s from %s", server, q, zone)
 			return Answer{Rcode: m.Rcode, Answers: answers}, nil
 		}
 		if chain, end := cnames(m.Answers, name, zone); len(chain) > 0 && t != dnsmsg.TypeCNAME {
-			r.trace("%s answered %s with a CNAME", server, q)
+			r.trace(ctx, "%s answered %s with a CNAME", server, q)
 			// Records for a target outside the server's zone aren't its to give.
 			if answers := matching(m.Answers, end, t); len(answers) > 0 && inZone(end, zone) {
 				return Answer{Rcode: m.Rcode, Answers: append(chain, answers...)}, nil
@@ -246,7 +252,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 		}
 		soa := matchingType(m.Authority, dnsmsg.TypeSOA)
 		if m.Rcode == dnsmsg.RcodeNXDomain {
-			r.trace("%s says %s doesn't exist", server, name)
+			r.trace(ctx, "%s says %s doesn't exist", server, name)
 			return Answer{Rcode: dnsmsg.RcodeNXDomain, Authority: soa}, nil
 		}
 		child, glue, err := r.follow(ctx, m, server, q, name, zone, depth)
@@ -255,7 +261,7 @@ func (r *Resolver) lookup(ctx context.Context, name string, t dnsmsg.Type, depth
 		}
 		if child == "" {
 			if m.Rcode == dnsmsg.RcodeSuccess && (m.Authoritative || len(soa) > 0) {
-				r.trace("%s says %s has no %s records", server, name, t)
+				r.trace(ctx, "%s says %s has no %s records", server, name, t)
 				return Answer{Rcode: dnsmsg.RcodeSuccess, Authority: soa}, nil
 			}
 			return Answer{}, fmt.Errorf("%s: %s gave neither an answer nor a referral", q, server)
@@ -274,7 +280,7 @@ func (r *Resolver) follow(ctx context.Context, m dnsmsg.Message, server netip.Ad
 		return "", nil, nil
 	}
 	glue := glueFor(m, ns, zone, r.IPv6)
-	r.trace("%s sent %s to %s (%d servers, %d addresses in glue)", server, q, child, len(ns), len(glue))
+	r.trace(ctx, "%s sent %s to %s (%d servers, %d addresses in glue)", server, q, child, len(ns), len(glue))
 	if len(glue) == 0 {
 		glue = r.addressesOf(ctx, ns, depth)
 	}
@@ -301,7 +307,7 @@ func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []ne
 			types = append(types, dnsmsg.TypeAAAA)
 		}
 		for _, t := range types {
-			r.trace("looking up %s's %s address", n, t)
+			r.trace(ctx, "looking up %s's %s address", n, t)
 			ans, err := r.resolve(ctx, n, t, depth+1)
 			if err != nil {
 				continue
@@ -342,7 +348,7 @@ func (r *Resolver) ask(ctx context.Context, servers []netip.Addr, q dnsmsg.Quest
 		if err == nil {
 			return m, s, nil
 		}
-		r.trace("%v", err)
+		r.trace(ctx, "%v", err)
 		errs = append(errs, err)
 	}
 	return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%w: %w", ErrNoAnswer, errors.Join(errs...))
