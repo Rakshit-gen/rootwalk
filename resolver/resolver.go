@@ -235,7 +235,7 @@ func (r *Resolver) addressesOf(ctx context.Context, ns []string, depth int) []ne
 			continue
 		}
 		var out []netip.Addr
-		for _, rr := range ans.Answers {
+		for _, rr := range matchingType(ans.Answers, dnsmsg.TypeA) { // not the CNAMEs on the way
 			out = append(out, rr.Addr)
 		}
 		if len(out) > 0 {
