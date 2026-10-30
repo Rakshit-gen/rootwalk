@@ -44,11 +44,13 @@ func TestLookups(t *testing.T) {
 		{[]string{"www.example.test"}, 0, "www.example.test.\t60\tA\t192.0.2.1\n"},
 		{[]string{"www.example.test", "aaaa"}, 0, "; www.example.test. has no AAAA records\n"},
 		{[]string{"nope.example.test"}, 0, "; nope.example.test. doesn't exist\n"},
+		{[]string{"-json", "www.example.test"}, 0, `{"name":"www.example.test.","type":"A","rcode":"NOERROR",` +
+			`"answers":[{"name":"www.example.test.","ttl":60,"type":"A","data":"192.0.2.1"}],"authority":[],"ms":`},
 		{[]string{"-short", "www.example.test"}, 0, "192.0.2.1\n"},
 		{[]string{"-short", "nope.example.test"}, 0, ""},
 	} {
 		code, out, errs := rootwalk(c.args...)
-		if code != c.code || out != c.out {
+		if code != c.code || out != c.out && !(strings.HasSuffix(c.out, `"ms":`) && strings.HasPrefix(out, c.out)) {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", c.args, code, out, errs)
 		}
 	}
@@ -56,7 +58,7 @@ func TestLookups(t *testing.T) {
 
 func TestUsageErrors(t *testing.T) {
 	for _, args := range [][]string{{}, {"a", "A", "extra"}, {"a", "NOTATYPE"}, {"-nope"}, {"serve", "extra"},
-		{"serve", "-allow", "not-a-prefix"}} {
+		{"serve", "-allow", "not-a-prefix"}, {"-short", "-json", "a"}} {
 		if code, _, _ := rootwalk(args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)
 		}

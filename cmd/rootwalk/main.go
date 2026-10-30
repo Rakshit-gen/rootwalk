@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -20,7 +21,7 @@ import (
 )
 
 const usage = `usage:
-  rootwalk [-trace] [-short] [-6] [-no-minimise] [-timeout 10s] name [type]
+  rootwalk [-trace] [-short|-json] [-6] [-no-minimise] [-timeout 10s] name [type]
                                                     look a name up (type A unless given)
   rootwalk serve [-trace] [-6] [-no-minimise] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...] [-rate 100] [-log]
                                                     answer other programs' queries, with a cache
@@ -41,6 +42,7 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 	trace := fs.Bool("trace", false, "print each server asked and what it said")
 	short := fs.Bool("short", false, "print only the data of the final records, like dig +short")
+	asJSON := fs.Bool("json", false, "print the answer as JSON")
 	timeout := fs.Duration("timeout", 10*time.Second, "give up on a lookup after this long")
 	v6 := fs.Bool("6", false, "reach nameservers over IPv6 too")
 	full := fs.Bool("no-minimise", false, "send every server the full name (RFC 9156 minimisation is on by default)")
@@ -87,7 +89,17 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 			return 2
 		}
 	}
-	return query(r, fs.Arg(0), t, *short, stdout, stderr)
+	out := text
+	switch {
+	case *short && *asJSON:
+		fmt.Fprintln(stderr, "-short and -json don't go together")
+		return 2
+	case *short:
+		out = shortText
+	case *asJSON:
+		out = jsonOut
+	}
+	return query(r, fs.Arg(0), t, out, stdout, stderr)
 }
 
 func serve(s *resolver.Server, addr string, stderr io.Writer) int {
@@ -116,30 +128,67 @@ func serve(s *resolver.Server, addr string, stderr io.Writer) int {
 	return 0
 }
 
-func query(r *resolver.Resolver, name string, t dnsmsg.Type, short bool, stdout, stderr io.Writer) int {
+// An output writes the answer to name's type t lookup.
+type output func(w io.Writer, name string, t dnsmsg.Type, ans resolver.Answer, took time.Duration)
+
+func query(r *resolver.Resolver, name string, t dnsmsg.Type, out output, stdout, stderr io.Writer) int {
 	start := time.Now()
 	ans, err := r.Resolve(context.Background(), name, t)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if short {
-		for _, rr := range ans.Answers {
-			if rr.Type == t {
-				fmt.Fprintln(stdout, strings.SplitN(rr.String(), "\t", 4)[3])
-			}
-		}
-		return 0
-	}
+	took := time.Since(start)
+	out(stdout, dnsmsg.Fqdn(name), t, ans, took)
+	fmt.Fprintf(stderr, "; %v\n", took.Round(time.Millisecond))
+	return 0
+}
+
+func text(w io.Writer, name string, t dnsmsg.Type, ans resolver.Answer, _ time.Duration) {
 	for _, rr := range ans.Answers {
-		fmt.Fprintln(stdout, rr)
+		fmt.Fprintln(w, rr)
 	}
 	switch {
 	case ans.Rcode == dnsmsg.RcodeNXDomain:
-		fmt.Fprintf(stdout, "; %s doesn't exist\n", dnsmsg.Fqdn(name))
+		fmt.Fprintf(w, "; %s doesn't exist\n", name)
 	case len(ans.Answers) == 0:
-		fmt.Fprintf(stdout, "; %s has no %s records\n", dnsmsg.Fqdn(name), t)
+		fmt.Fprintf(w, "; %s has no %s records\n", name, t)
 	}
-	fmt.Fprintf(stderr, "; %v\n", time.Since(start).Round(time.Millisecond))
-	return 0
+}
+
+func shortText(w io.Writer, _ string, t dnsmsg.Type, ans resolver.Answer, _ time.Duration) {
+	for _, rr := range ans.Answers {
+		if rr.Type == t {
+			fmt.Fprintln(w, data(rr))
+		}
+	}
+}
+
+// data is a record's data as text, the part after name, TTL and type.
+func data(rr dnsmsg.RR) string { return strings.SplitN(rr.String(), "\t", 4)[3] }
+
+type jsonRR struct {
+	Name string `json:"name"`
+	TTL  uint32 `json:"ttl"`
+	Type string `json:"type"`
+	Data string `json:"data"`
+}
+
+func jsonOut(w io.Writer, name string, t dnsmsg.Type, ans resolver.Answer, took time.Duration) {
+	conv := func(rrs []dnsmsg.RR) []jsonRR {
+		out := []jsonRR{}
+		for _, rr := range rrs {
+			out = append(out, jsonRR{rr.Name, rr.TTL, rr.Type.String(), data(rr)})
+		}
+		return out
+	}
+	rcode := map[uint8]string{dnsmsg.RcodeSuccess: "NOERROR", dnsmsg.RcodeNXDomain: "NXDOMAIN"}[ans.Rcode]
+	json.NewEncoder(w).Encode(struct {
+		Name      string   `json:"name"`
+		Type      string   `json:"type"`
+		Rcode     string   `json:"rcode"`
+		Answers   []jsonRR `json:"answers"`
+		Authority []jsonRR `json:"authority"`
+		MS        int64    `json:"ms"`
+	}{name, t.String(), rcode, conv(ans.Answers), conv(ans.Authority), took.Milliseconds()})
 }
