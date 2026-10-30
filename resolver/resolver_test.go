@@ -311,3 +311,21 @@ func TestLooksUpIPv6AddressesOfGluelessNameservers(t *testing.T) {
 		t.Fatalf("%v %v", ans, err)
 	}
 }
+
+func TestServesStaleWhenTheServersStopAnswering(t *testing.T) {
+	n, r := world(t)
+	var clock *clock
+	r.Cache, clock = newTestCache()
+	if _, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA); err != nil {
+		t.Fatal(err)
+	}
+	clock.wait(2 * time.Hour) // past every TTL in the world
+	n.servers = nil
+	ans, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA)
+	if err != nil || len(ans.Answers) != 1 || ans.Answers[0].TTL != staleTTL {
+		t.Fatalf("got %v, %v", ans.Answers, err)
+	}
+	if _, err := r.Resolve(ctx, "never.example.test", dnsmsg.TypeA); err == nil {
+		t.Fatal("answered a name that was never cached")
+	}
+}

@@ -126,24 +126,38 @@ func (r *Resolver) resolve(ctx context.Context, name string, t dnsmsg.Type, dept
 	return Answer{}, fmt.Errorf("%s: more than %d CNAMEs", name, maxCNAMEs)
 }
 
+// fromCache turns what get finds for name into an Answer: the records,
+// a negative answer, or a CNAME still to follow.
+func (r *Resolver) fromCache(get func(string, dnsmsg.Type) ([]dnsmsg.RR, uint8, bool), name string, t dnsmsg.Type) (Answer, bool) {
+	if rrs, rcode, ok := get(name, t); ok {
+		r.trace("cache has %s %s", name, t)
+		if rrs[0].Type != t { // a negative entry holds only the SOA
+			return Answer{Rcode: rcode, Authority: rrs}, true
+		}
+		return Answer{Answers: rrs}, true
+	}
+	if rrs, _, ok := get(name, dnsmsg.TypeCNAME); ok && t != dnsmsg.TypeCNAME {
+		r.trace("cache has %s CNAME", name)
+		return Answer{Answers: rrs, next: rrs[0].Target}, true
+	}
+	return Answer{}, false
+}
+
 // cached answers from the cache, or looks the name up and stores the result.
 func (r *Resolver) cached(ctx context.Context, name string, t dnsmsg.Type, depth int) (Answer, error) {
 	if r.Cache == nil {
 		return r.lookup(ctx, name, t, depth)
 	}
-	if rrs, rcode, ok := r.Cache.Get(name, t); ok {
-		r.trace("cache has %s %s", name, t)
-		if rrs[0].Type != t { // a negative entry holds only the SOA
-			return Answer{Rcode: rcode, Authority: rrs}, nil
-		}
-		return Answer{Answers: rrs}, nil
-	}
-	if rrs, _, ok := r.Cache.Get(name, dnsmsg.TypeCNAME); ok && t != dnsmsg.TypeCNAME {
-		r.trace("cache has %s CNAME", name)
-		return Answer{Answers: rrs, next: rrs[0].Target}, nil
+	if ans, ok := r.fromCache(r.Cache.Get, name, t); ok {
+		return ans, nil
 	}
 	ans, err := r.lookup(ctx, name, t, depth)
 	if err != nil {
+		// RFC 8767: an old answer beats none when the servers have gone quiet.
+		if stale, ok := r.fromCache(r.Cache.GetStale, name, t); ok {
+			r.trace("serving %s %s stale: %v", name, t, err)
+			return stale, nil
+		}
 		return ans, err
 	}
 	// Each record set is cached under its own name, so a chain is reusable from any point.
