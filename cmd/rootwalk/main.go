@@ -27,10 +27,11 @@ const usage = `usage:
 `
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], resolver.Net{}, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+// run is the whole command, with the network passed in so tests can fake it.
+func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) int {
 	serving := len(args) > 0 && args[0] == "serve"
 	if serving {
 		args = args[1:]
@@ -49,14 +50,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	// A cache even for one lookup, so a CNAME into a zone already walked starts there.
+	r := &resolver.Resolver{Net: network, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6, NoMinimise: *full}
+	if *trace {
+		r.Trace = func(s string) { fmt.Fprintln(stderr, ";", s) }
+	}
 	if serving {
 		if fs.NArg() != 0 {
 			fs.Usage()
 			return 2
-		}
-		r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6, NoMinimise: *full}
-		if *trace {
-			r.Trace = func(s string) { fmt.Fprintln(stderr, s) }
 		}
 		s := &resolver.Server{Resolver: r, Rate: *rate}
 		if *logQueries {
@@ -83,11 +85,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 2
 		}
-	}
-	// A cache even for one lookup, so a CNAME into a zone already walked starts there.
-	r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache(), IPv6: *v6, NoMinimise: *full}
-	if *trace {
-		r.Trace = func(s string) { fmt.Fprintln(stderr, ";", s) }
 	}
 	return query(r, fs.Arg(0), t, stdout, stderr)
 }
