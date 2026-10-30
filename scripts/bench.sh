@@ -14,6 +14,7 @@ sleep 0.5
 # Prints the query time in ms and the status, e.g. "319 NOERROR".
 q() { dig @127.0.0.1 -p $port "$1" +tries=1 +time=15 | awk '/status:/ {sub(",", "", $6); s=$6} /Query time/ {t=$4} END {print t, s}'; }
 
+colds=$(mktemp)
 printf '%-28s %10s %10s %s\n' name cold_ms warm_ms status
 while read -r name; do
 	[ -z "$name" ] && continue
@@ -21,7 +22,13 @@ while read -r name; do
 	cold=$1 st=$2
 	set -- $(q "$name")
 	printf '%-28s %10s %10s %s\n' "$name" "$cold" "$1" "$st"
+	echo "$cold" >>"$colds"
 done <"$names"
+sort -n "$colds" | awk '{v[NR] = $1} END {
+	m = NR % 2 ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2
+	printf "median cold %s ms over %d names, range %s to %s ms\n", m, NR, v[1], v[NR]
+}'
+rm -f "$colds"
 kill $pid
 wait $pid 2>/dev/null || true
 tail -1 bench-serve.log
