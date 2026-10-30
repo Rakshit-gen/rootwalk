@@ -161,6 +161,16 @@ func (c *Cache) GetStale(name string, t dnsmsg.Type) (rrs []dnsmsg.RR, rcode uin
 	return out, e.rcode, true
 }
 
+// Flush empties the cache, stale entries and zones included. The stats
+// keep counting.
+func (c *Cache) Flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m = map[cacheKey]*list.Element{}
+	c.lru.Init()
+	c.zones = map[string]delegation{}
+}
+
 // CacheStats counts what the cache has done since it was made.
 type CacheStats struct {
 	Hits, Misses int // Get calls that found something, and that didn't

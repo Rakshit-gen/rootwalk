@@ -128,6 +128,14 @@ func run(args []string, network resolver.Exchanger, stdout, stderr io.Writer) in
 func serve(s *resolver.Server, addr string, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		for range hup {
+			s.Resolver.Cache.Flush()
+			fmt.Fprintln(stderr, "cache flushed")
+		}
+	}()
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)

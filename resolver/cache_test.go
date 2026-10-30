@@ -137,3 +137,20 @@ func TestStaleEntriesLastADayPastTheirTTL(t *testing.T) {
 		t.Fatal("GetStale a day past expiry still answered")
 	}
 }
+
+func TestFlushEmptiesEverything(t *testing.T) {
+	c, _ := newTestCache()
+	c.Put("a.", dnsmsg.TypeA, []dnsmsg.RR{{Name: "a.", Type: dnsmsg.TypeA, TTL: 60, Addr: netip.MustParseAddr("192.0.2.1")}})
+	c.PutZone("a.", []netip.Addr{netip.MustParseAddr("192.0.2.1")}, 60)
+	c.Flush()
+	if _, _, ok := c.GetStale("a.", dnsmsg.TypeA); ok {
+		t.Fatal("record survived")
+	}
+	if z, _ := c.Closest("a."); z != "" || c.Stats().Entries != 0 {
+		t.Fatal("zone or entry count survived")
+	}
+	c.Put("b.", dnsmsg.TypeA, []dnsmsg.RR{{Name: "b.", Type: dnsmsg.TypeA, TTL: 60, Addr: netip.MustParseAddr("192.0.2.1")}})
+	if _, _, ok := c.Get("b.", dnsmsg.TypeA); !ok {
+		t.Fatal("cache unusable after Flush")
+	}
+}

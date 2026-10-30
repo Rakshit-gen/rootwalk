@@ -44,7 +44,8 @@ indented:
 Other flags: `-6` to reach nameservers over IPv6 too, `-no-minimise` to send
 every server the full name, `-timeout` for the whole lookup. `serve` also
 takes `-allow` (who may ask), `-rate` (UDP queries a second per client) and
-`-log`. `rootwalk -h` lists them all.
+`-log`. `rootwalk -h` lists them all. Send `serve` a SIGHUP to empty its
+cache.
 
 ## Measured vs Claimed
 
