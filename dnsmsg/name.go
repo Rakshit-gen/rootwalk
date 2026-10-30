@@ -133,6 +133,13 @@ func (c compression) appendName(b []byte, name string) ([]byte, error) {
 	return b, nil
 }
 
+// CheckName reports whether name can be written in a message: no empty
+// labels, none over 63 bytes, and 255 bytes in all.
+func CheckName(name string) error {
+	_, err := appendName(nil, name)
+	return err
+}
+
 // Fqdn adds the trailing dot if it is missing.
 func Fqdn(name string) string {
 	if strings.HasSuffix(name, ".") && !strings.HasSuffix(name, `\.`) {

@@ -483,3 +483,15 @@ func TestRefreshesAPopularNameBeforeItExpires(t *testing.T) {
 	}
 	t.Fatal("never refreshed")
 }
+
+func TestABadNameNeverReachesTheNetwork(t *testing.T) {
+	n, r := world(t)
+	for _, name := range []string{"a..example.test", strings.Repeat("x", 64) + ".test", strings.Repeat("abc.", 70)} {
+		if _, err := r.Resolve(ctx, name, dnsmsg.TypeA); err == nil {
+			t.Errorf("%.20s...: no error", name)
+		}
+	}
+	if n.queries != 0 {
+		t.Fatalf("%d queries sent for bad names", n.queries)
+	}
+}

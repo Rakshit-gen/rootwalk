@@ -109,6 +109,9 @@ func (r *Resolver) trace(ctx context.Context, format string, args ...any) {
 // answer holds the whole chain, CNAMEs first. Calls for the same name and
 // type at the same time share one lookup.
 func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Answer, error) {
+	if err := dnsmsg.CheckName(name); err != nil {
+		return Answer{}, fmt.Errorf("%q: %w", name, err)
+	}
 	timeout := r.Timeout
 	if timeout == 0 {
 		timeout = 10 * time.Second
