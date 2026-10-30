@@ -168,7 +168,7 @@ func query(r *resolver.Resolver, name string, t dnsmsg.Type, out output, stdout,
 	}
 	took := time.Since(start)
 	out(stdout, dnsmsg.Fqdn(name), t, ans, took)
-	fmt.Fprintf(stderr, "; %v\n", took.Round(time.Millisecond))
+	fmt.Fprintf(stderr, "; %d queries, %v\n", ans.Queries, took.Round(time.Millisecond))
 	return 0
 }
 

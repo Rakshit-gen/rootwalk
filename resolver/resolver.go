@@ -37,6 +37,10 @@ type Answer struct {
 	Answers   []dnsmsg.RR
 	Authority []dnsmsg.RR // the SOA, for a negative answer
 
+	// Queries is how many queries Resolve sent for this answer, nested
+	// lookups and retries included. 0 means the cache had it all.
+	Queries int
+
 	next string // a CNAME target the answer stopped at, still to look up
 }
 
@@ -114,7 +118,9 @@ func (r *Resolver) Resolve(ctx context.Context, name string, t dnsmsg.Type) (Ans
 	return r.flights.do(ctx, key(name, t), func() (Answer, error) {
 		b := &budget{}
 		b.left.Store(maxQueries)
-		return r.resolve(context.WithValue(ctx, budgetKey{}, b), dnsmsg.Fqdn(name), t, 0)
+		ans, err := r.resolve(context.WithValue(ctx, budgetKey{}, b), dnsmsg.Fqdn(name), t, 0)
+		ans.Queries = int(maxQueries - max(b.left.Load(), 0))
+		return ans, err
 	})
 }
 

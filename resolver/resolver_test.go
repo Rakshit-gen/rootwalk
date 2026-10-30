@@ -357,6 +357,20 @@ func TestConcurrentLookupsForOneNameShareTheWork(t *testing.T) {
 	}
 }
 
+func TestAnswersCountTheirQueries(t *testing.T) {
+	n, r := world(t)
+	r.Cache, _ = newTestCache()
+	for _, want := range []int{3, 0} {
+		ans, err := r.Resolve(ctx, "www.example.test", dnsmsg.TypeA)
+		if err != nil || ans.Queries != want {
+			t.Fatalf("Queries %d, want %d (%v)", ans.Queries, want, err)
+		}
+	}
+	if ans, _ := r.Resolve(ctx, "nope.example.test", dnsmsg.TypeA); ans.Queries != 1 || n.queries != 4 {
+		t.Fatalf("Queries %d, network saw %d", ans.Queries, n.queries)
+	}
+}
+
 func TestBelow(t *testing.T) {
 	for _, c := range []struct{ name, zone, want string }{
 		{"a.b.example.com.", ".", "com."},
