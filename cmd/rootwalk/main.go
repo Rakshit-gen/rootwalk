@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,7 +21,8 @@ import (
 
 const usage = `usage:
   rootwalk [-trace] [-6] [-timeout 10s] name [type]   look a name up (type A unless given)
-  rootwalk serve [-trace] [-6] [-addr 127.0.0.1:5353] answer other programs' queries, with a cache
+  rootwalk serve [-trace] [-6] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...]
+                                                    answer other programs' queries, with a cache
 `
 
 func main() {
@@ -37,6 +40,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	trace := fs.Bool("trace", false, "print each server asked and what it said")
 	timeout := fs.Duration("timeout", 10*time.Second, "give up on a lookup after this long")
 	v6 := fs.Bool("6", false, "reach nameservers over IPv6 too")
+	allow := fs.String("allow", "", "for serve: comma-separated prefixes that may ask (default loopback and private)")
 	addr := fs.String("addr", "127.0.0.1:5353", "where serve listens, UDP and TCP")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -50,7 +54,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if *trace {
 			r.Trace = func(s string) { fmt.Fprintln(stderr, s) }
 		}
-		return serve(r, *addr, stderr)
+		s := &resolver.Server{Resolver: r}
+		for _, p := range strings.FieldsFunc(*allow, func(c rune) bool { return c == ',' }) {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(p))
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return 2
+			}
+			s.Allow = append(s.Allow, prefix)
+		}
+		return serve(s, *addr, stderr)
 	}
 	if fs.NArg() < 1 || fs.NArg() > 2 {
 		fs.Usage()
@@ -72,7 +85,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return query(r, fs.Arg(0), t, stdout, stderr)
 }
 
-func serve(r *resolver.Resolver, addr string, stderr io.Writer) int {
+func serve(s *resolver.Server, addr string, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ln, err := net.Listen("tcp", addr)
@@ -87,14 +100,13 @@ func serve(r *resolver.Resolver, addr string, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stderr, "serving on %s, UDP and TCP\n", addr)
 	errs := make(chan error, 2)
-	s := &resolver.Server{Resolver: r}
 	go func() { errs <- s.ServeTCP(ctx, ln) }()
 	go func() { errs <- s.ServeUDP(ctx, pc) }()
 	if err := <-errs; err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	hits, misses := r.Cache.Stats()
+	hits, misses := s.Resolver.Cache.Stats()
 	fmt.Fprintf(stderr, "stopped; cache answered %d of %d lookups\n", hits, hits+misses)
 	return 0
 }
