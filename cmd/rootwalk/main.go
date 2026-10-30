@@ -63,7 +63,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout}
+	// A cache even for one lookup, so a CNAME into a zone already walked starts there.
+	r := &resolver.Resolver{Net: resolver.Net{}, Timeout: *timeout, Cache: resolver.NewCache()}
 	if *trace {
 		r.Trace = func(s string) { fmt.Fprintln(stderr, ";", s) }
 	}
