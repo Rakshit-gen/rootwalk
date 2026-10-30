@@ -1,6 +1,7 @@
 package dnsmsg
 
 import (
+	"fmt"
 	"net/netip"
 	"reflect"
 	"testing"
@@ -73,5 +74,36 @@ func TestEDNS(t *testing.T) {
 	m.Additional[0].TTL = 1<<16 | 0x8000
 	if e, ok := m.EDNS(); !ok || e != (EDNS{UDPSize: 1232, Version: 1, DO: true}) {
 		t.Fatalf("got %+v %v", e, ok)
+	}
+}
+
+// A typical referral from a TLD: four NS records with glue.
+func referralMessage() Message {
+	m := Message{Header: Header{ID: 1, Response: true}, Questions: []Question{{"www.example.com.", TypeA, ClassINET}}}
+	for i := range 4 {
+		ns := fmt.Sprintf("ns%d.example.com.", i)
+		m.Authority = append(m.Authority, RR{Name: "example.com.", Type: TypeNS, Class: ClassINET, TTL: 172800, Target: ns})
+		m.Additional = append(m.Additional, RR{Name: ns, Type: TypeA, Class: ClassINET, TTL: 172800,
+			Addr: netip.AddrFrom4([4]byte{192, 0, 2, byte(i)})})
+	}
+	return m
+}
+
+func BenchmarkPack(b *testing.B) {
+	m := referralMessage()
+	for b.Loop() {
+		if _, err := m.Pack(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkUnpack(b *testing.B) {
+	wire, _ := referralMessage().Pack()
+	b.SetBytes(int64(len(wire)))
+	for b.Loop() {
+		if _, err := Unpack(wire); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
