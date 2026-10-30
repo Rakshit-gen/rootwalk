@@ -52,3 +52,13 @@ func (t *rtts) order(servers []netip.Addr) []netip.Addr {
 	slices.SortStableFunc(out, func(a, b netip.Addr) int { return cmp.Compare(t.m[a], t.m[b]) })
 	return out
 }
+
+// timeout is how long to wait for s before trying the next server: four
+// times its usual round trip, within bounds, or a second if it's new.
+func (t *rtts) timeout(s netip.Addr) time.Duration {
+	d, ok := t.get(s)
+	if !ok {
+		return time.Second
+	}
+	return min(max(4*d, 250*time.Millisecond), failPenalty)
+}

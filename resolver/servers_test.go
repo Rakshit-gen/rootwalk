@@ -49,3 +49,32 @@ func TestADeadServerIsAskedOnlyOnce(t *testing.T) {
 		t.Fatalf("the dead root was asked %d times", n.asked[addrs("10.9.9.9")[0]])
 	}
 }
+
+func TestTimeoutFollowsTheServersRTT(t *testing.T) {
+	var r rtts
+	a, b, c := addrs("192.0.2.1")[0], addrs("192.0.2.2")[0], addrs("192.0.2.3")[0]
+	r.observe(a, 20*time.Millisecond, true)
+	r.observe(b, 200*time.Millisecond, true)
+	r.observe(c, 0, false)
+	for s, want := range map[netip.Addr]time.Duration{a: 250 * time.Millisecond, b: 800 * time.Millisecond,
+		c: failPenalty, addrs("192.0.2.4")[0]: time.Second} {
+		if got := r.timeout(s); got != want {
+			t.Errorf("%s: %v, want %v", s, got, want)
+		}
+	}
+}
+
+func TestASlowServerIsLeftForTheNext(t *testing.T) {
+	n, r := world(t)
+	n.servers[addrs("10.0.0.2")[0]] = n.servers[addrs("10.0.0.1")[0]]
+	n.slow = map[netip.Addr]time.Duration{addrs("10.0.0.2")[0]: 5 * time.Second}
+	r.Roots = addrs("10.0.0.2", "10.0.0.1")
+	r.rtt.observe(r.Roots[0], 10*time.Millisecond, true) // it was fast once, so it's asked first
+	start := time.Now()
+	if _, err := r.Resolve(ctx, "www.example.test", 1); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("took %v waiting on the slow server", took)
+	}
+}

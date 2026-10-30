@@ -218,7 +218,9 @@ func (r *Resolver) ask(ctx context.Context, servers []netip.Addr, q dnsmsg.Quest
 			return dnsmsg.Message{}, netip.Addr{}, fmt.Errorf("%s: %w", q, err)
 		}
 		start := time.Now()
-		m, err := r.Net.Exchange(ctx, s, q)
+		actx, cancel := context.WithTimeout(ctx, r.rtt.timeout(s))
+		m, err := r.Net.Exchange(actx, s, q)
+		cancel()
 		if ctx.Err() == nil { // our deadline running out says nothing about the server
 			r.rtt.observe(s, time.Since(start), err == nil)
 		}

@@ -103,7 +103,8 @@ type network struct {
 	servers map[netip.Addr]func(dnsmsg.Question) dnsmsg.Message
 	queries int
 	asked   map[netip.Addr]int
-	delay   time.Duration // how long each query takes
+	delay   time.Duration                // how long each query takes
+	slow    map[netip.Addr]time.Duration // and how much longer these servers take
 }
 
 func (n *network) Exchange(ctx context.Context, server netip.Addr, q dnsmsg.Question) (dnsmsg.Message, error) {
@@ -113,7 +114,7 @@ func (n *network) Exchange(ctx context.Context, server netip.Addr, q dnsmsg.Ques
 	}
 	n.asked[server]++
 	select {
-	case <-time.After(n.delay):
+	case <-time.After(n.delay + n.slow[server]):
 	case <-ctx.Done():
 		return dnsmsg.Message{}, ctx.Err()
 	}
