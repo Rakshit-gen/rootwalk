@@ -21,7 +21,7 @@ import (
 
 const usage = `usage:
   rootwalk [-trace] [-6] [-timeout 10s] name [type]   look a name up (type A unless given)
-  rootwalk serve [-trace] [-6] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...] [-rate 100]
+  rootwalk serve [-trace] [-6] [-addr 127.0.0.1:5353] [-allow 10.1.0.0/16,...] [-rate 100] [-log]
                                                     answer other programs' queries, with a cache
 `
 
@@ -41,6 +41,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	timeout := fs.Duration("timeout", 10*time.Second, "give up on a lookup after this long")
 	v6 := fs.Bool("6", false, "reach nameservers over IPv6 too")
 	allow := fs.String("allow", "", "for serve: comma-separated prefixes that may ask (default loopback and private)")
+	logQueries := fs.Bool("log", false, "for serve: print a line per query")
 	rate := fs.Float64("rate", 100, "for serve: UDP queries a second per client, 0 for no limit")
 	addr := fs.String("addr", "127.0.0.1:5353", "where serve listens, UDP and TCP")
 	if err := fs.Parse(args); err != nil {
@@ -56,6 +57,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			r.Trace = func(s string) { fmt.Fprintln(stderr, s) }
 		}
 		s := &resolver.Server{Resolver: r, Rate: *rate}
+		if *logQueries {
+			s.Log = func(l string) { fmt.Fprintln(stderr, time.Now().Format(time.TimeOnly), l) }
+		}
 		for _, p := range strings.FieldsFunc(*allow, func(c rune) bool { return c == ',' }) {
 			prefix, err := netip.ParsePrefix(strings.TrimSpace(p))
 			if err != nil {
