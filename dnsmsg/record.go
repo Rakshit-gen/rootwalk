@@ -19,13 +19,14 @@ const (
 	TypeMX    Type = 15
 	TypeTXT   Type = 16
 	TypeAAAA  Type = 28
+	TypeSRV   Type = 33
 	TypeOPT   Type = 41
 )
 
 const ClassINET = 1
 
 var typeNames = map[Type]string{TypeA: "A", TypeNS: "NS", TypeCNAME: "CNAME", TypeSOA: "SOA", TypePTR: "PTR",
-	TypeMX: "MX", TypeTXT: "TXT", TypeAAAA: "AAAA", TypeOPT: "OPT"}
+	TypeMX: "MX", TypeTXT: "TXT", TypeAAAA: "AAAA", TypeSRV: "SRV", TypeOPT: "OPT"}
 
 func (t Type) String() string {
 	if s, ok := typeNames[t]; ok {
@@ -86,8 +87,9 @@ type SOA struct {
 }
 
 // RR is one resource record. Which data field is set depends on Type:
-// Addr for A and AAAA, Target for NS, CNAME, PTR and MX, Pref for MX,
-// SOA for SOA, Text for TXT, and Raw for everything else.
+// Addr for A and AAAA, Target for NS, CNAME, PTR, MX and SRV, Pref for MX
+// and SRV (its priority), Weight and Port for SRV, SOA for SOA, Text for
+// TXT, and Raw for everything else.
 type RR struct {
 	Name   string
 	Type   Type
@@ -96,6 +98,8 @@ type RR struct {
 	Addr   netip.Addr
 	Target string
 	Pref   uint16
+	Weight uint16
+	Port   uint16
 	SOA    SOA
 	Text   []string
 	Raw    []byte
@@ -110,6 +114,8 @@ func (r RR) String() string {
 		data = r.Target
 	case TypeMX:
 		data = fmt.Sprintf("%d %s", r.Pref, r.Target)
+	case TypeSRV:
+		data = fmt.Sprintf("%d %d %d %s", r.Pref, r.Weight, r.Port, r.Target)
 	case TypeSOA:
 		s := r.SOA
 		data = fmt.Sprintf("%s %s %d %d %d %d %d", s.MName, s.RName, s.Serial, s.Refresh, s.Retry, s.Expire, s.Minimum)
@@ -164,6 +170,14 @@ func readRR(msg []byte, off int) (RR, int, error) {
 		if r.Target, off, err = readName(msg, off+2); err != nil || off != end {
 			return RR{}, 0, bad
 		}
+	case TypeSRV:
+		if n < 7 {
+			return RR{}, 0, bad
+		}
+		r.Pref, r.Weight, r.Port = binary.BigEndian.Uint16(data), binary.BigEndian.Uint16(data[2:]), binary.BigEndian.Uint16(data[4:])
+		if r.Target, off, err = readName(msg, off+6); err != nil || off != end {
+			return RR{}, 0, bad
+		}
 	case TypeSOA:
 		s := &r.SOA
 		if s.MName, off, err = readName(msg, off); err != nil {
@@ -211,6 +225,11 @@ func (r RR) append(b []byte, c compression) ([]byte, error) {
 	case TypeMX:
 		b = binary.BigEndian.AppendUint16(b, r.Pref)
 		b, err = c.appendName(b, r.Target)
+	case TypeSRV:
+		b = binary.BigEndian.AppendUint16(b, r.Pref)
+		b = binary.BigEndian.AppendUint16(b, r.Weight)
+		b = binary.BigEndian.AppendUint16(b, r.Port)
+		b, err = appendName(b, r.Target) // RFC 2782: never compressed
 	case TypeSOA:
 		if b, err = c.appendName(b, r.SOA.MName); err == nil {
 			b, err = c.appendName(b, r.SOA.RName)
