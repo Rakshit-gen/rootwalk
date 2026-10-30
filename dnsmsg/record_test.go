@@ -7,7 +7,7 @@ import (
 
 func TestQuestionRoundTrip(t *testing.T) {
 	q := Question{"example.com.", TypeAAAA, ClassINET}
-	b, err := q.append(nil)
+	b, err := q.append(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestRRRoundTripsEveryType(t *testing.T) {
 		{Name: "example.", Type: 65, Class: ClassINET, TTL: 8, Raw: []byte{1, 2, 3}},
 	}
 	for _, r := range rrs {
-		b, err := r.append(nil)
+		b, err := r.append(nil, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", r.Type, err)
 		}
@@ -87,7 +87,7 @@ func TestRRRoundTripsEveryType(t *testing.T) {
 			t.Errorf("%s: got %q, want %q (%v)", r.Type, got.String(), r.String(), err)
 		}
 	}
-	if _, err := (RR{Name: "x.", Type: TypeA, Addr: netip.MustParseAddr("::1")}).append(nil); err == nil {
+	if _, err := (RR{Name: "x.", Type: TypeA, Addr: netip.MustParseAddr("::1")}).append(nil, nil); err == nil {
 		t.Error("A record with an IPv6 address written")
 	}
 }

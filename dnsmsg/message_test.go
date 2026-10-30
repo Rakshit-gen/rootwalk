@@ -43,3 +43,24 @@ func TestNewQueryLooksLikeDigs(t *testing.T) {
 		t.Fatalf("got %q\nwant %q", b, want)
 	}
 }
+
+func TestPackCompressesRepeatedNames(t *testing.T) {
+	m := Message{Header: Header{ID: 1, Response: true}, Questions: []Question{{"www.example.com.", TypeA, ClassINET}}}
+	for i := range 20 {
+		m.Answers = append(m.Answers, RR{Name: "www.example.com.", Type: TypeA, Class: ClassINET, TTL: 60,
+			Addr: netip.AddrFrom4([4]byte{192, 0, 2, byte(i)})})
+	}
+	m.Authority = []RR{{Name: "Example.com.", Type: TypeNS, Class: ClassINET, TTL: 60, Target: "ns.example.com."}}
+	b, err := m.Pack()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 12 header, 21 question, 20 answers of pointer+10+4, then "\x07Example" and a pointer, 10, and the target in full.
+	if len(b) != 12+21+20*16+10+10+16 {
+		t.Fatalf("%d bytes", len(b))
+	}
+	got, err := Unpack(b)
+	if err != nil || !reflect.DeepEqual(got.Answers, m.Answers) || got.Authority[0].Name != "Example.com." {
+		t.Fatalf("round trip: %v\n%+v", err, got)
+	}
+}

@@ -1,6 +1,7 @@
 package dnsmsg
 
 import (
+	"encoding/binary"
 	"errors"
 	"strings"
 )
@@ -106,6 +107,29 @@ func appendName(b []byte, name string) ([]byte, error) {
 		return nil, ErrName
 	}
 	return b, nil
+}
+
+// compression maps the wire form of each name suffix already written to
+// its offset in the message, so later names can point back at it. A nil
+// compression writes names in full.
+type compression map[string]int
+
+func (c compression) appendName(b []byte, name string) ([]byte, error) {
+	wire, err := appendName(nil, name)
+	if err != nil || c == nil {
+		return append(b, wire...), err
+	}
+	for i := 0; wire[i] != 0; i += int(wire[i]) + 1 {
+		suffix := string(wire[i:]) // exact bytes, so a pointer never changes a name's case
+		if at, ok := c[suffix]; ok {
+			b = append(b, wire[:i]...)
+			return binary.BigEndian.AppendUint16(b, 0xc000|uint16(at)), nil
+		}
+		if len(b)+i < 0x4000 {
+			c[suffix] = len(b) + i
+		}
+	}
+	return append(b, wire...), nil
 }
 
 // Fqdn adds the trailing dot if it is missing.

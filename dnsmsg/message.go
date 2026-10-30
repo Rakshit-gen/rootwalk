@@ -9,21 +9,23 @@ type Message struct {
 	Additional []RR
 }
 
-// Pack writes m, setting the section counts from the slices.
+// Pack writes m, setting the section counts from the slices. Owner names
+// and questions are compressed.
 func (m Message) Pack() ([]byte, error) {
 	h := m.Header
 	h.QDCount, h.ANCount = uint16(len(m.Questions)), uint16(len(m.Answers))
 	h.NSCount, h.ARCount = uint16(len(m.Authority)), uint16(len(m.Additional))
 	b := h.append(make([]byte, 0, 512))
+	c := compression{}
 	var err error
 	for _, q := range m.Questions {
-		if b, err = q.append(b); err != nil {
+		if b, err = q.append(b, c); err != nil {
 			return nil, err
 		}
 	}
 	for _, sec := range [][]RR{m.Answers, m.Authority, m.Additional} {
 		for _, r := range sec {
-			if b, err = r.append(b); err != nil {
+			if b, err = r.append(b, c); err != nil {
 				return nil, err
 			}
 		}

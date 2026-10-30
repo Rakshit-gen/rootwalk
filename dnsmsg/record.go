@@ -58,8 +58,8 @@ type Question struct {
 
 func (q Question) String() string { return q.Name + " " + q.Type.String() }
 
-func (q Question) append(b []byte) ([]byte, error) {
-	b, err := appendName(b, q.Name)
+func (q Question) append(b []byte, c compression) ([]byte, error) {
+	b, err := c.appendName(b, q.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -189,8 +189,8 @@ func readRR(msg []byte, off int) (RR, int, error) {
 	return r, end, nil
 }
 
-func (r RR) append(b []byte) ([]byte, error) {
-	b, err := appendName(b, r.Name)
+func (r RR) append(b []byte, c compression) ([]byte, error) {
+	b, err := c.appendName(b, r.Name)
 	if err != nil {
 		return nil, err
 	}
