@@ -160,3 +160,43 @@ func TestOnlyAllowedClientsGetAnswers(t *testing.T) {
 		t.Errorf("an allowed client got rcode %d", m.Rcode)
 	}
 }
+
+func TestClientsOverTheRateAreSentToTCP(t *testing.T) {
+	_, r := world(t)
+	s := &Server{Resolver: r, Rate: 2}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.ServeUDP(ctx, pc)
+	conn, err := net.Dial("udp", pc.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	truncated, answered := 0, 0
+	for i := range 6 {
+		b, _ := dnsmsg.NewQuery(uint16(i), "www.example.test", dnsmsg.TypeA, 1232).Pack()
+		conn.Write(b)
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buf := make([]byte, 2048)
+		got, err := conn.Read(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := dnsmsg.Unpack(buf[:got])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.Truncated {
+			truncated++
+		} else if len(m.Answers) == 1 {
+			answered++
+		}
+	}
+	if truncated != 2 || answered != 4 {
+		t.Fatalf("%d of 6 truncated (want 2), %d answered (want 4)", truncated, answered)
+	}
+}

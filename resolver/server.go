@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"net"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/Rakshit-gen/rootwalk/dnsmsg"
@@ -58,6 +59,26 @@ type Server struct {
 	// only, so a server bound to a public address isn't an open resolver
 	// by accident.
 	Allow []netip.Prefix
+
+	// Rate is how many UDP queries a second each client may send, with
+	// bursts of twice that; 0 means no limit. Past it a client gets an
+	// empty reply with TC set, which a real client follows over TCP and
+	// which is too small to be worth spoofing. TCP isn't limited: its
+	// handshake already proves the client is who it says.
+	Rate float64
+
+	limitOnce sync.Once
+	limit     *limiter
+}
+
+// overRate reports whether a UDP client has sent more than Rate allows.
+func (s *Server) overRate(from net.Addr) bool {
+	if s.Rate <= 0 {
+		return false
+	}
+	s.limitOnce.Do(func() { s.limit = &limiter{rate: s.Rate, now: time.Now} })
+	ap, err := netip.ParseAddrPort(from.String())
+	return err == nil && !s.limit.allow(ap.Addr())
 }
 
 func (s *Server) allowed(a netip.Addr) bool {
@@ -102,6 +123,14 @@ func (s *Server) ServeUDP(ctx context.Context, conn net.PacketConn) error {
 		q, err := dnsmsg.Unpack(buf[:n])
 		if err != nil {
 			continue // not DNS, or not worth a reply
+		}
+		if s.overRate(from) {
+			m := replyTo(q)
+			m.Truncated = true
+			if b, err := m.Pack(); err == nil {
+				conn.WriteTo(b, from)
+			}
+			continue
 		}
 		go func() {
 			if b, err := fitUDP(s.answer(ctx, from, q), q); err == nil {
