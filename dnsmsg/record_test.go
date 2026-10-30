@@ -75,6 +75,7 @@ func TestRRRoundTripsEveryType(t *testing.T) {
 		{Name: "example.", Type: TypeMX, Class: ClassINET, TTL: 5, Pref: 10, Target: "mail.example."},
 		{Name: "example.", Type: TypeSOA, Class: ClassINET, TTL: 6, SOA: SOA{"ns1.example.", "admin.example.", 7, 8, 9, 10, 11}},
 		{Name: "_sip._tcp.example.", Type: TypeSRV, Class: ClassINET, TTL: 9, Pref: 10, Weight: 60, Port: 5060, Target: "sip.example."},
+		{Name: "example.", Type: TypeCAA, Class: ClassINET, TTL: 10, CAA: CAA{128, "issue", "letsencrypt.org"}},
 		{Name: "example.", Type: TypeTXT, Class: ClassINET, TTL: 7, Text: []string{"v=spf1 -all", ""}},
 		{Name: "example.", Type: 65, Class: ClassINET, TTL: 8, Raw: []byte{1, 2, 3}},
 	}

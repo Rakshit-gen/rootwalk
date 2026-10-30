@@ -21,12 +21,13 @@ const (
 	TypeAAAA  Type = 28
 	TypeSRV   Type = 33
 	TypeOPT   Type = 41
+	TypeCAA   Type = 257
 )
 
 const ClassINET = 1
 
 var typeNames = map[Type]string{TypeA: "A", TypeNS: "NS", TypeCNAME: "CNAME", TypeSOA: "SOA", TypePTR: "PTR",
-	TypeMX: "MX", TypeTXT: "TXT", TypeAAAA: "AAAA", TypeSRV: "SRV", TypeOPT: "OPT"}
+	TypeMX: "MX", TypeTXT: "TXT", TypeAAAA: "AAAA", TypeSRV: "SRV", TypeOPT: "OPT", TypeCAA: "CAA"}
 
 func (t Type) String() string {
 	if s, ok := typeNames[t]; ok {
@@ -86,10 +87,16 @@ type SOA struct {
 	Serial, Refresh, Retry, Expire, Minimum uint32
 }
 
+// CAA says which certificate authorities may issue for a name (RFC 8659).
+type CAA struct {
+	Flags      uint8
+	Tag, Value string
+}
+
 // RR is one resource record. Which data field is set depends on Type:
 // Addr for A and AAAA, Target for NS, CNAME, PTR, MX and SRV, Pref for MX
 // and SRV (its priority), Weight and Port for SRV, SOA for SOA, Text for
-// TXT, and Raw for everything else.
+// TXT, CAA for CAA, and Raw for everything else.
 type RR struct {
 	Name   string
 	Type   Type
@@ -101,6 +108,7 @@ type RR struct {
 	Weight uint16
 	Port   uint16
 	SOA    SOA
+	CAA    CAA
 	Text   []string
 	Raw    []byte
 }
@@ -119,6 +127,8 @@ func (r RR) String() string {
 	case TypeSOA:
 		s := r.SOA
 		data = fmt.Sprintf("%s %s %d %d %d %d %d", s.MName, s.RName, s.Serial, s.Refresh, s.Retry, s.Expire, s.Minimum)
+	case TypeCAA:
+		data = fmt.Sprintf("%d %s %q", r.CAA.Flags, r.CAA.Tag, r.CAA.Value)
 	case TypeTXT:
 		q := make([]string, len(r.Text))
 		for i, t := range r.Text {
@@ -188,6 +198,12 @@ func readRR(msg []byte, off int) (RR, int, error) {
 		}
 		u := func(i int) uint32 { return binary.BigEndian.Uint32(msg[off+4*i:]) }
 		s.Serial, s.Refresh, s.Retry, s.Expire, s.Minimum = u(0), u(1), u(2), u(3), u(4)
+	case TypeCAA:
+		if n < 2 || int(data[1]) == 0 || 2+int(data[1]) > n {
+			return RR{}, 0, bad
+		}
+		tag := 2 + int(data[1])
+		r.CAA = CAA{data[0], string(data[2:tag]), string(data[tag:])}
 	case TypeTXT:
 		for i := 0; i < n; {
 			l := int(data[i])
@@ -237,6 +253,12 @@ func (r RR) append(b []byte, c compression) ([]byte, error) {
 		for _, n := range []uint32{r.SOA.Serial, r.SOA.Refresh, r.SOA.Retry, r.SOA.Expire, r.SOA.Minimum} {
 			b = binary.BigEndian.AppendUint32(b, n)
 		}
+	case TypeCAA:
+		if len(r.CAA.Tag) == 0 || len(r.CAA.Tag) > 255 {
+			return nil, fmt.Errorf("dnsmsg: CAA tag must be 1 to 255 bytes")
+		}
+		b = append(b, r.CAA.Flags, byte(len(r.CAA.Tag)))
+		b = append(append(b, r.CAA.Tag...), r.CAA.Value...)
 	case TypeTXT:
 		for _, t := range r.Text {
 			if len(t) > 255 {
