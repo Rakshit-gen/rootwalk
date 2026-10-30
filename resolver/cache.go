@@ -31,11 +31,11 @@ type Cache struct {
 	Max int              // DefaultMax unless set
 	Now func() time.Time // time.Now unless a test sets it
 
-	mu           sync.Mutex
-	m            map[cacheKey]*list.Element // of *entry, most recently used at the front
-	lru          list.List
-	zones        map[string]delegation
-	hits, misses int
+	mu                  sync.Mutex
+	m                   map[cacheKey]*list.Element // of *entry, most recently used at the front
+	lru                 list.List
+	zones               map[string]delegation
+	hits, misses, stale int
 }
 
 const DefaultMax = 100_000
@@ -130,6 +130,7 @@ func (c *Cache) GetStale(name string, t dnsmsg.Type) (rrs []dnsmsg.RR, rcode uin
 		return nil, 0, false
 	}
 	e := el.Value.(*entry)
+	c.stale++
 	out := make([]dnsmsg.RR, len(e.rrs))
 	for i, r := range e.rrs {
 		r.TTL = staleTTL
@@ -138,11 +139,17 @@ func (c *Cache) GetStale(name string, t dnsmsg.Type) (rrs []dnsmsg.RR, rcode uin
 	return out, e.rcode, true
 }
 
-// Stats is how many lookups were answered from the cache and how many weren't.
-func (c *Cache) Stats() (hits, misses int) {
+// CacheStats counts what the cache has done since it was made.
+type CacheStats struct {
+	Hits, Misses int // Get calls that found something, and that didn't
+	Stale        int // GetStale calls that found something
+	Entries      int // record sets held now, expired ones included
+}
+
+func (c *Cache) Stats() CacheStats {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.hits, c.misses
+	return CacheStats{c.hits, c.misses, c.stale, c.lru.Len()}
 }
 
 // PutNegative caches "no such name" (rcode NXDomain) or "no records of this

@@ -36,8 +36,8 @@ func TestCacheCountsDownAndExpires(t *testing.T) {
 	if _, _, ok := c.Get("example.com.", dnsmsg.TypeA); ok {
 		t.Fatal("still cached when the TTL ran out")
 	}
-	if h, m := c.Stats(); h != 1 || m != 1 {
-		t.Fatalf("stats %d hits %d misses", h, m)
+	if st := c.Stats(); st.Hits != 1 || st.Misses != 1 || st.Entries != 1 {
+		t.Fatalf("stats %+v", st)
 	}
 }
 

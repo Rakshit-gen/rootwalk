@@ -330,6 +330,9 @@ func TestServesStaleWhenTheServersStopAnswering(t *testing.T) {
 	if _, err := r.Resolve(ctx, "never.example.test", dnsmsg.TypeA); err == nil {
 		t.Fatal("answered a name that was never cached")
 	}
+	if st := r.Cache.Stats(); st.Stale != 1 {
+		t.Fatalf("stats %+v, want one stale answer", st)
+	}
 }
 
 func TestConcurrentLookupsForOneNameShareTheWork(t *testing.T) {

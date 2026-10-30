@@ -143,8 +143,9 @@ func serve(s *resolver.Server, addr string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	hits, misses := s.Resolver.Cache.Stats()
-	fmt.Fprintf(stderr, "stopped; cache answered %d of %d lookups\n", hits, hits+misses)
+	st := s.Resolver.Cache.Stats()
+	fmt.Fprintf(stderr, "stopped; cache answered %d of %d lookups (%d stale) and held %d record sets\n",
+		st.Hits, st.Hits+st.Misses, st.Stale, st.Entries)
 	return 0
 }
 
