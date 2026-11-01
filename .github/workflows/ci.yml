@@ -19,6 +19,6 @@ jobs:
       - run: make lint
       - run: make test
       - name: Fuzz the message parser for a bit
-        run: go test ./dnsmsg -run '^$' -fuzz FuzzUnpack -fuzztime 20s
+        run: go test ./dnsmsg -run '^$' -fuzz FuzzUnpack -fuzztime 1000000x
       - name: Look up a real name from the root
         run: make build && ./rootwalk -trace example.com
